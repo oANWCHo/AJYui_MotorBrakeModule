@@ -1610,6 +1610,10 @@
 		(uuid "28892acb-63ca-477a-94e6-630a28220c8c")
 	)
 	(no_connect
+		(at 123.19 118.11)
+		(uuid "2f4631d2-5ce6-4606-9dd4-0b34c48b05a1")
+	)
+	(no_connect
 		(at 165.1 115.57)
 		(uuid "32b62288-9de1-4567-a35a-83f9026ba8e1")
 	)
@@ -1640,10 +1644,6 @@
 	(no_connect
 		(at 166.37 102.87)
 		(uuid "82902dad-8999-4617-90ac-b4e5349aa536")
-	)
-	(no_connect
-		(at 165.1 118.11)
-		(uuid "b1447844-9aad-4269-a181-4af901021ac0")
 	)
 	(no_connect
 		(at 123.19 102.87)
@@ -2498,14 +2498,14 @@
 	)
 	(hierarchical_label "MCOR_Speed_Control_IN_to_MCU"
 		(shape input)
-		(at 123.19 118.11 180)
+		(at 165.1 118.11 0)
 		(effects
 			(font
 				(size 1.27 1.27)
 			)
-			(justify right)
+			(justify left)
 		)
-		(uuid "a24d1c3a-e2b9-4d04-b836-4fd2a35a7e11")
+		(uuid "aafb1f19-0c41-4ce1-9249-9979b3463f9c")
 	)
 	(hierarchical_label "MCP4725_SDA"
 		(shape bidirectional)
