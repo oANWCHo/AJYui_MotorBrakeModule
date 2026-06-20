@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Delete 2 resources" deleteContents="false" description="Delete 2 resources" element1="/MotorBrake_Firmware_Car_Shield/Debug" element2="/MotorBrake_Firmware_Car_Shield/MotorBrake_Firmware Debug.launch" flags="7" id="org.eclipse.ltk.core.refactoring.delete.resources" resources="2" stamp="1781710957200"/>
+</session>

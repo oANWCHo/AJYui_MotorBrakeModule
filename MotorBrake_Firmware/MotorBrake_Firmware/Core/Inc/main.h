@@ -59,8 +59,8 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define USER_SW_Pin GPIO_PIN_1
 #define USER_SW_GPIO_Port GPIOC
-#define RELAY_Pin GPIO_PIN_2
-#define RELAY_GPIO_Port GPIOC
+#define RELAY_Brake_Pin GPIO_PIN_2
+#define RELAY_Brake_GPIO_Port GPIOC
 #define WDI_Pin GPIO_PIN_5
 #define WDI_GPIO_Port GPIOA
 #define LED_1_Pin GPIO_PIN_5

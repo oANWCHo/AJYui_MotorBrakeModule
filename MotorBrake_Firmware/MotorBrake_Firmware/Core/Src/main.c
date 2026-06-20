@@ -249,6 +249,7 @@ int main(void)
   MX_FDCAN1_Init();
   MX_TIM1_Init();
   MX_TIM6_Init();
+
   /* USER CODE BEGIN 2 */
 	/* PC1 = local toggle button (active-high, internal pull-down). Configured
 	 * here in USER CODE so it survives CubeMX regeneration of gpio.c (CubeMX
@@ -304,23 +305,23 @@ int main(void)
 
 		if (watchdog_status == 1) {
 			/* E-Stop / latched fault: open relay now, no graceful return. */
-			HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 			servo_target = SERVO_HOME_DEG;
 			brake_state  = BRAKE_OFF;
 		} else {
 			switch (brake_state) {
 			case BRAKE_OFF:
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 				servo_target = SERVO_HOME_DEG;
 				if (relay_cmd == 1) {
-					HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_SET);
+					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
 					servo_target = brake_angle_deg;
 					brake_state  = BRAKE_ON;
 				}
 				break;
 
 			case BRAKE_ON:
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
 				servo_target = brake_angle_deg;   /* follow live angle updates */
 				if (relay_cmd == 0) {
 					servo_target = SERVO_HOME_DEG; /* drive home before powering off */
@@ -330,13 +331,13 @@ int main(void)
 				break;
 
 			case BRAKE_RELEASING:
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
 				servo_target = SERVO_HOME_DEG;
 				if (relay_cmd == 1) {              /* re-engaged mid-release */
 					servo_target = brake_angle_deg;
 					brake_state  = BRAKE_ON;
 				} else if ((HAL_GetTick() - release_tick) >= SERVO_SETTLE_MS) {
-					HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 					brake_state = BRAKE_OFF;
 				}
 				break;
@@ -374,7 +375,7 @@ int main(void)
 				oc_over_since = (now != 0u) ? now : 1u;  /* 0 is the "below" sentinel */
 			}
 			if ((now - oc_over_since) >= OVERCURRENT_TRIP_MS) {
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 				relay_cmd    = 0;
 				servo_target = SERVO_HOME_DEG;
 				brake_state  = BRAKE_OFF;
@@ -529,7 +530,7 @@ static void CAN_App_Init(void)
 static void BrakeStatus_Send(void)
 {
 	uint8_t relay_active =
-			(HAL_GPIO_ReadPin(RELAY_GPIO_Port, RELAY_Pin) == GPIO_PIN_SET) ? 1u : 0u;
+			(HAL_GPIO_ReadPin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin) == GPIO_PIN_SET) ? 1u : 0u;
 
 	/* Current Validation: Relay is ON but almost no current is flowing ->
 	 * broken motor wire or failed motor. Latch the fault so the PC sees it.
@@ -646,7 +647,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     }
 
     // 1. สั่งปิด Relay ทันทีที่ระดับฮาร์ดแวร์
-    HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 
     // 2. บังคับเคลียร์ตัวแปรคำสั่งใน Live Expression
     // เพื่อป้องกันไม่ให้โค้ดใน while(1) กลับมาสั่งเปิด Relay อีก

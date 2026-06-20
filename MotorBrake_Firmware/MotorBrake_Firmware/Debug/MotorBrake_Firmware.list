@@ -39,13 +39,13 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  17 .debug_line   00017856  00000000  00000000  0004ed75  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 18 .debug_str    00111ab1  00000000  00000000  000665cb  2**0
+ 18 .debug_str    00111abd  00000000  00000000  000665cb  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .comment      00000043  00000000  00000000  0017807c  2**0
+ 19 .comment      00000043  00000000  00000000  00178088  2**0
                   CONTENTS, READONLY
- 20 .debug_frame  000055f8  00000000  00000000  001780c0  2**2
+ 20 .debug_frame  000055f8  00000000  00000000  001780cc  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 21 .debug_line_str 00000089  00000000  00000000  0017d6b8  2**0
+ 21 .debug_line_str 00000089  00000000  00000000  0017d6c4  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -840,7 +840,7 @@ void MX_GPIO_Init(void)
  800069c:	683b      	ldr	r3, [r7, #0]
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin,GPIO_PIN_RESET);
  800069e:	2200      	movs	r2, #0
  80006a0:	2104      	movs	r1, #4
  80006a2:	4830      	ldr	r0, [pc, #192]	@ (8000764 <MX_GPIO_Init+0x154>)
@@ -877,7 +877,7 @@ void MX_GPIO_Init(void)
  80006d2:	f004 f87f 	bl	80047d4 <HAL_GPIO_Init>
 
   /*Configure GPIO pin : RELAY_Pin */
-  GPIO_InitStruct.Pin = RELAY_Pin;
+  GPIO_InitStruct.Pin = RELAY_Brake_Pin;
  80006d6:	2304      	movs	r3, #4
  80006d8:	617b      	str	r3, [r7, #20]
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -889,7 +889,7 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
  80006e2:	2300      	movs	r3, #0
  80006e4:	623b      	str	r3, [r7, #32]
-  HAL_GPIO_Init(RELAY_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(RELAY_Brake_GPIO_Port, &GPIO_InitStruct);
  80006e6:	f107 0314 	add.w	r3, r7, #20
  80006ea:	4619      	mov	r1, r3
  80006ec:	481d      	ldr	r0, [pc, #116]	@ (8000764 <MX_GPIO_Init+0x154>)
@@ -1218,6 +1218,7 @@ int main(void)
  8000932:	f000 fcc3 	bl	80012bc <MX_TIM1_Init>
   MX_TIM6_Init();
  8000936:	f000 fd71 	bl	800141c <MX_TIM6_Init>
+
   /* USER CODE BEGIN 2 */
 	/* PC1 = local toggle button (active-high, internal pull-down). Configured
 	 * here in USER CODE so it survives CubeMX regeneration of gpio.c (CubeMX
@@ -1346,7 +1347,7 @@ int main(void)
  8000a0a:	2b01      	cmp	r3, #1
  8000a0c:	d10c      	bne.n	8000a28 <main+0x114>
 			/* E-Stop / latched fault: open relay now, no graceful return. */
-			HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
  8000a0e:	2200      	movs	r2, #0
  8000a10:	2104      	movs	r1, #4
  8000a12:	4875      	ldr	r0, [pc, #468]	@ (8000be8 <main+0x2d4>)
@@ -1374,7 +1375,7 @@ int main(void)
  8000a3a:	d01b      	beq.n	8000a74 <main+0x160>
  8000a3c:	e063      	b.n	8000b06 <main+0x1f2>
 			case BRAKE_OFF:
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
  8000a3e:	2200      	movs	r2, #0
  8000a40:	2104      	movs	r1, #4
  8000a42:	4869      	ldr	r0, [pc, #420]	@ (8000be8 <main+0x2d4>)
@@ -1389,7 +1390,7 @@ int main(void)
  8000a54:	b2db      	uxtb	r3, r3
  8000a56:	2b01      	cmp	r3, #1
  8000a58:	d150      	bne.n	8000afc <main+0x1e8>
-					HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_SET);
+					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
  8000a5a:	2201      	movs	r2, #1
  8000a5c:	2104      	movs	r1, #4
  8000a5e:	4862      	ldr	r0, [pc, #392]	@ (8000be8 <main+0x2d4>)
@@ -1408,7 +1409,7 @@ int main(void)
  8000a72:	e043      	b.n	8000afc <main+0x1e8>
 
 			case BRAKE_ON:
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
  8000a74:	2201      	movs	r2, #1
  8000a76:	2104      	movs	r1, #4
  8000a78:	485b      	ldr	r0, [pc, #364]	@ (8000be8 <main+0x2d4>)
@@ -1442,7 +1443,7 @@ int main(void)
  8000aa8:	e02a      	b.n	8000b00 <main+0x1ec>
 
 			case BRAKE_RELEASING:
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
  8000aaa:	2201      	movs	r2, #1
  8000aac:	2104      	movs	r1, #4
  8000aae:	484e      	ldr	r0, [pc, #312]	@ (8000be8 <main+0x2d4>)
@@ -1467,7 +1468,7 @@ int main(void)
  8000ad0:	2201      	movs	r2, #1
  8000ad2:	701a      	strb	r2, [r3, #0]
 				} else if ((HAL_GetTick() - release_tick) >= SERVO_SETTLE_MS) {
-					HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 					brake_state = BRAKE_OFF;
 				}
 				break;
@@ -1481,7 +1482,7 @@ int main(void)
  8000ae2:	f640 32b7 	movw	r2, #2999	@ 0xbb7
  8000ae6:	4293      	cmp	r3, r2
  8000ae8:	d90c      	bls.n	8000b04 <main+0x1f0>
-					HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
  8000aea:	2200      	movs	r2, #0
  8000aec:	2104      	movs	r1, #4
  8000aee:	483e      	ldr	r0, [pc, #248]	@ (8000be8 <main+0x2d4>)
@@ -1640,7 +1641,7 @@ int main(void)
  8000c50:	1ad3      	subs	r3, r2, r3
  8000c52:	2b95      	cmp	r3, #149	@ 0x95
  8000c54:	d912      	bls.n	8000c7c <main+0x368>
-				HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
  8000c56:	2200      	movs	r2, #0
  8000c58:	2104      	movs	r1, #4
  8000c5a:	4827      	ldr	r0, [pc, #156]	@ (8000cf8 <main+0x3e4>)
@@ -2055,7 +2056,7 @@ static void BrakeStatus_Send(void)
  8000eca:	b084      	sub	sp, #16
  8000ecc:	af00      	add	r7, sp, #0
 	uint8_t relay_active =
-			(HAL_GPIO_ReadPin(RELAY_GPIO_Port, RELAY_Pin) == GPIO_PIN_SET) ? 1u : 0u;
+			(HAL_GPIO_ReadPin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin) == GPIO_PIN_SET) ? 1u : 0u;
  8000ece:	2104      	movs	r1, #4
  8000ed0:	4816      	ldr	r0, [pc, #88]	@ (8000f2c <BrakeStatus_Send+0x64>)
  8000ed2:	f003 fe0b 	bl	8004aec <HAL_GPIO_ReadPin>
@@ -2456,7 +2457,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     }
 
     // 1. สั่งปิด Relay ทันทีที่ระดับฮาร์ดแวร์
-    HAL_GPIO_WritePin(RELAY_GPIO_Port, RELAY_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
  800116c:	2200      	movs	r2, #0
  800116e:	2104      	movs	r1, #4
  8001170:	4807      	ldr	r0, [pc, #28]	@ (8001190 <HAL_GPIO_EXTI_Callback+0x60>)

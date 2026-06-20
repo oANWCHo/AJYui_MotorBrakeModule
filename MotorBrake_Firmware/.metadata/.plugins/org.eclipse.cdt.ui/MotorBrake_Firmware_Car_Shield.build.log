@@ -1,0 +1,10 @@
+22:49:16 **** Incremental Build of configuration Debug for project MotorBrake_Firmware_Car_Shield ****
+make -j20 all 
+arm-none-eabi-size  MotorBrake_Firmware_Car_Shield.elf 
+   text	   data	    bss	    dec	    hex	filename
+  35452	     44	   2396	  37892	   9404	MotorBrake_Firmware_Car_Shield.elf
+Finished building: default.size.stdout
+ 
+
+22:49:16 Build Finished. 0 errors, 0 warnings. (took 68ms)
+
