@@ -9,6 +9,7 @@
 		<item key="SmartImportRootWizardPage.STORE_NESTED_PROJECTS" value="true"/>
 		<item key="SmartImportRootWizardPage.STORE_CONFIGURE_NATURES" value="true"/>
 		<list key="org.eclipse.ui.internal.wizards.datatransfer.SmartImportRootWizardPage.knownSources">
+			<item value="D:\Nano\AJYui_MotorBrakeModule\MotorBrake_Firmware\MotorBrake_Firmware"/>
 			<item value="/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware_Car_Data_Log"/>
 			<item value="/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware"/>
 			<item value="/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware/ros2_bridge"/>
@@ -17,11 +18,11 @@
 			<item value="D:\Nano\Another_Job\AjYui_motor_brake\MotorBrake_Firmware\ROS_F446"/>
 		</list>
 		<section name="STSmartImportWizard.dialogBounds">
-			<item key="DIALOG_X_ORIGIN" value="939"/>
-			<item key="DIALOG_Y_ORIGIN" value="322"/>
-			<item key="DIALOG_WIDTH" value="904"/>
-			<item key="DIALOG_HEIGHT" value="691"/>
-			<item key="DIALOG_FONT_NAME" value="1|Ubuntu Sans|11.0|0|GTK|1|"/>
+			<item key="DIALOG_X_ORIGIN" value="599"/>
+			<item key="DIALOG_Y_ORIGIN" value="290"/>
+			<item key="DIALOG_WIDTH" value="990"/>
+			<item key="DIALOG_HEIGHT" value="577"/>
+			<item key="DIALOG_FONT_NAME" value="1|Segoe UI|9.0|0|WINDOWS|1|-12|0|0|0|400|0|0|0|1|0|0|0|0|Segoe UI"/>
 		</section>
 		<section name="SmartImportWizard.dialogBounds">
 			<item key="DIALOG_X_ORIGIN" value="211"/>
@@ -30,5 +31,13 @@
 			<item key="DIALOG_HEIGHT" value="691"/>
 			<item key="DIALOG_FONT_NAME" value="1|Ubuntu Sans|11.0|0|GTK|1|"/>
 		</section>
+	</section>
+	<section name="ChooseWorkspaceDialogSettings">
+		<item key="DIALOG_X_ORIGIN" value="556"/>
+		<item key="DIALOG_Y_ORIGIN" value="330"/>
+	</section>
+	<section name="WORKBENCH_SETTINGS">
+		<list key="ENABLED_TRANSFERS">
+		</list>
 	</section>
 </section>

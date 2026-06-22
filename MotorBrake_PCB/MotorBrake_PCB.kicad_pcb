@@ -862,7 +862,7 @@
 		(embedded_fonts no)
 		(model "${KICAD10_3DMODEL_DIR}/Connector_PinSocket_2.54mm.3dshapes/PinSocket_2x19_P2.54mm_Vertical.step"
 			(offset
-				(xyz -2.5 0 0)
+				(xyz -2.5 0 -1.5)
 			)
 			(scale
 				(xyz 1 1 1)
@@ -3372,7 +3372,7 @@
 				(xyz -0 -0 -0)
 			)
 		)
-		(model "D:/Nano/Another_Job/AjYui_motor_brake/MotorBrake_shield/3D/DIP Red 2-way.step"
+		(model "${KIPRJMOD}/3D/DIP Red 2-way.step"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -10461,7 +10461,7 @@
 				(xyz -0 -0 -180)
 			)
 		)
-		(model "D:/Nano/Another_Job/AjYui_motor_brake/MotorBrake_shield/3D/XT30PB.STEP"
+		(model "${KIPRJMOD}/3D/XT30PB.STEP"
 			(offset
 				(xyz 0 0 0)
 			)
@@ -17110,7 +17110,7 @@
 				(xyz -0 -0 -0)
 			)
 		)
-		(model "D:/Nano/Another_Job/AjYui_motor_brake/MotorBrake_shield/3D/User Library-xt30upb-m.STEP"
+		(model "${KIPRJMOD}/3D/User Library-xt30upb-m.STEP"
 			(offset
 				(xyz 0 0.25 0)
 			)
@@ -18816,7 +18816,7 @@
 				(xyz -0 -0 -0)
 			)
 		)
-		(model "D:/Nano/Another_Job/AjYui_motor_brake/MotorBrake_shield/3D/T9A_Code-1_Form-C.STEP"
+		(model "${KIPRJMOD}/3D/T9A_Code-1_Form-C.STEP"
 			(offset
 				(xyz 9 -6.5 -0.5)
 			)
@@ -19566,7 +19566,7 @@
 				(xyz -0 -0 -0)
 			)
 		)
-		(model "D:/Nano/Another_Job/AjYui_motor_brake/MotorBrake_shield/3D/User Library-xt30upb-m.STEP"
+		(model "${KIPRJMOD}/3D/User Library-xt30upb-m.STEP"
 			(offset
 				(xyz 0 0.25 0)
 			)

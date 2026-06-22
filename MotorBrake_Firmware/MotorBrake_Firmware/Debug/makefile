@@ -60,8 +60,8 @@ all: main-build
 main-build: MotorBrake_Firmware.elf secondary-outputs
 
 # Tool invocations
-MotorBrake_Firmware.elf MotorBrake_Firmware.map: $(OBJS) $(USER_OBJS) /home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware/STM32G474RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "MotorBrake_Firmware.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware/STM32G474RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MotorBrake_Firmware.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+MotorBrake_Firmware.elf MotorBrake_Firmware.map: $(OBJS) $(USER_OBJS) D:\Nano\AJYui_MotorBrakeModule\MotorBrake_Firmware\MotorBrake_Firmware\STM32G474RETX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "MotorBrake_Firmware.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\Nano\AJYui_MotorBrakeModule\MotorBrake_Firmware\MotorBrake_Firmware\STM32G474RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MotorBrake_Firmware.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
