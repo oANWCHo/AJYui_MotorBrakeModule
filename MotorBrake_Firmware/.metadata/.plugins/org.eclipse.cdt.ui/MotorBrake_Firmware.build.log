@@ -1,10 +1,10 @@
-22:00:30 **** Incremental Build of configuration Debug for project MotorBrake_Firmware ****
+22:11:53 **** Incremental Build of configuration Debug for project MotorBrake_Firmware ****
 make -j20 all 
 arm-none-eabi-size  MotorBrake_Firmware.elf 
    text	   data	    bss	    dec	    hex	filename
-  29868	     44	   2164	  32076	   7d4c	MotorBrake_Firmware.elf
+  29956	     48	   2192	  32196	   7dc4	MotorBrake_Firmware.elf
 Finished building: default.size.stdout
  
 
-22:00:30 Build Finished. 0 errors, 0 warnings. (took 133ms)
+22:11:53 Build Finished. 0 errors, 0 warnings. (took 70ms)
 

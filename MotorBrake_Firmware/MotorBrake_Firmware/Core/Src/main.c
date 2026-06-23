@@ -47,10 +47,15 @@
  *     [0..3] float32 angle_deg (little-endian, clamped to 0–180°). This is the
  *            "brake engaged" servo position: stored in flash and recalled on
  *            boot. The servo only drives to it while the relay is ON.
- * (servo_status frame removed — the servo position is no longer reported back) */
+ * /servo_status  (std_msgs/Float32): STM32 -> PC, ID 0x133, 4-byte, sent on the
+ *            same 20 ms tick as 0x131:
+ *     [0..3] float32 brake_angle_deg (little-endian). The angle the STM32 is
+ *            actually holding: the flash-recalled value at boot, then the live
+ *            (clamped) /servo_command value after each overwrite. */
 #define CAN_ID_BRAKE_CMD      0x130u
 #define CAN_ID_BRAKE_STATUS   0x131u
 #define CAN_ID_SERVO_CMD      0x132u
+#define CAN_ID_SERVO_STATUS   0x133u
 
 /* ---- INA240A2D current sensor (gain 50 V/V) with a 2 mOhm shunt ----------
  * Unidirectional wiring (REF tied to GND) so 0 A -> ~0 V and only the
@@ -152,6 +157,7 @@ float             current_ma = 0.0f;     // latest INA240 current reading, milli
 uint16_t          heartbeat_seq = 0;     // rolling counter so the PC can detect dropped frames
 
 FDCAN_TxHeaderTypeDef CanTxHeader;        // configured once in CAN_App_Init() — used for 0x131
+FDCAN_TxHeaderTypeDef CanServoTxHeader;   // configured once in CAN_App_Init() — used for 0x133
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -159,6 +165,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void  CAN_App_Init(void);          // FDCAN filter + start + RX notification
 static void  BrakeStatus_Send(void);      // pack and transmit the /brake_status heartbeat frame
+static void  ServoStatus_Send(void);      // transmit the held brake angle (0x133)
 static float   Flash_LoadBrakeAngle(float fallback); // recall the persisted brake angle on boot
 static uint8_t Flash_SaveBrakeAngle(float angle);    // persist the brake angle; returns 1 if readback verifies
 /* USER CODE END PFP */
@@ -400,9 +407,13 @@ int main(void)
 			}
 		}
 
-		/* Transmit the /brake_status heartbeat on the 20 ms tick. */
+		/* Transmit the held servo angle (0x133) + /brake_status heartbeat on the
+		 * 20 ms tick. 0x133 goes FIRST so the bridge has the current angle in
+		 * hand before it publishes /brake_status on receiving 0x131 — otherwise
+		 * the first heartbeat after a fresh MCU start carries a stale 0°. */
 		if (can_tx_flag) {
 			can_tx_flag = 0;
+			ServoStatus_Send();
 			BrakeStatus_Send();
 		}
 	}
@@ -514,6 +525,11 @@ static void CAN_App_Init(void)
 	CanTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
 	CanTxHeader.MessageMarker = 0;
 
+	/* Servo-status frame (0x133): 4-byte float32 of the held brake angle. */
+	CanServoTxHeader = CanTxHeader;
+	CanServoTxHeader.Identifier = CAN_ID_SERVO_STATUS;
+	CanServoTxHeader.DataLength = FDCAN_DLC_BYTES_4;
+
 	if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
 		Error_Handler();
 	}
@@ -550,6 +566,19 @@ static void BrakeStatus_Send(void)
 	heartbeat_seq++;
 
 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanTxHeader, TxData);
+}
+
+/**
+  * @brief Report the held brake angle (0x133): flash value at boot, then the
+  *        live /servo_command value after each overwrite.
+  */
+static void ServoStatus_Send(void)
+{
+	float angle = brake_angle_deg;          /* volatile -> local snapshot */
+	uint8_t TxData[4];
+	memcpy(&TxData[0], &angle, sizeof(float)); /* [0..3] float32, little-endian */
+
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanServoTxHeader, TxData);
 }
 
 /**

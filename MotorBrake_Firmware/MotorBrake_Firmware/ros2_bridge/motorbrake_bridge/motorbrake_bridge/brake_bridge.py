@@ -14,8 +14,14 @@ CAN ID 0x131 (STM32 -> PC, ~20 ms heartbeat) -> /brake_status (motorbrake_msgs/B
 Topic  /servo_command (std_msgs/Float32)      -> CAN ID 0x132  (PC -> STM32)
         data: angle_deg (0.0–180.0°). This is the "brake engaged" servo
         position; the STM32 stores it in flash and only drives the servo to it
-        while the relay is ON. The servo position is no longer reported back,
-        so BrakeStatus.servo_angle_deg echoes the last commanded angle.
+        while the relay is ON.
+
+CAN ID 0x133 (STM32 -> PC, same 20 ms tick)  -> BrakeStatus.servo_angle_deg
+        [0..3] float32 brake_angle_deg (little-endian). The angle the STM32 is
+        actually holding: the flash-recalled value at boot, then the live
+        (clamped) /servo_command value after each overwrite. This is the source
+        of truth for servo_angle_deg — the bridge no longer echoes its own
+        command.
 
 Fail-safe: if no /brake_status heartbeat arrives for `heartbeat_timeout`
 seconds (default 0.1 s = 100 ms), the bridge raises E-Stop and latches
@@ -48,6 +54,7 @@ class BrakeBridge(Node):
         self.declare_parameter('cmd_can_id', 0x130)
         self.declare_parameter('status_can_id', 0x131)
         self.declare_parameter('servo_cmd_can_id', 0x132)
+        self.declare_parameter('servo_status_can_id', 0x133)
         self.declare_parameter('heartbeat_timeout', 0.1)  # seconds (100 ms)
 
         self.can_interface = self.get_parameter('can_interface').value
@@ -56,6 +63,7 @@ class BrakeBridge(Node):
         self.cmd_can_id = int(self.get_parameter('cmd_can_id').value)
         self.status_can_id = int(self.get_parameter('status_can_id').value)
         self.servo_cmd_can_id = int(self.get_parameter('servo_cmd_can_id').value)
+        self.servo_status_can_id = int(self.get_parameter('servo_status_can_id').value)
         self.heartbeat_timeout = float(self.get_parameter('heartbeat_timeout').value)
 
         # ---- CAN bus -----------------------------------------------------
@@ -87,7 +95,7 @@ class BrakeBridge(Node):
         # ---- Heartbeat / fail-safe state --------------------------------
         self._last_status_time = None      # monotonic time of last RX, None until first frame
         self._estop_active = False
-        self._servo_angle_deg = 0.0        # last angle we commanded; echoed into BrakeStatus
+        self._servo_angle_deg = 0.0        # angle the STM32 reports holding (CAN 0x133)
         self._lock = threading.Lock()
 
         # Check the heartbeat at twice the timeout rate.
@@ -128,7 +136,6 @@ class BrakeBridge(Node):
         )
         try:
             self.bus.send(frame)
-            self._servo_angle_deg = float(msg.data)  # echoed into BrakeStatus
             self.get_logger().debug(
                 f'/servo_command -> {msg.data:.1f}° (CAN 0x{self.servo_cmd_can_id:03X})')
         except can.CanError as exc:
@@ -150,6 +157,8 @@ class BrakeBridge(Node):
 
             if frame.arbitration_id == self.status_can_id:
                 self._handle_brake_status(frame)
+            elif frame.arbitration_id == self.servo_status_can_id:
+                self._handle_servo_status(frame)
 
     def _handle_brake_status(self, frame):
         if len(frame.data) < 6:
@@ -179,6 +188,15 @@ class BrakeBridge(Node):
             self.get_logger().warn(
                 'STM32 reports watchdog_status=1 (E-Stop / open-load fault)',
                 throttle_duration_sec=1.0)
+
+    def _handle_servo_status(self, frame):
+        if len(frame.data) < 4:
+            self.get_logger().warn(
+                f'Short servo_status frame ({len(frame.data)} bytes), ignored')
+            return
+        # Held angle reported by the STM32: flash value at boot, live command after.
+        # Read in the same _rx_loop thread as _handle_brake_status, so no lock needed.
+        self._servo_angle_deg = struct.unpack('<f', bytes(frame.data[0:4]))[0]
 
     # ---------------------------------------------------------------------
     # Fail-safe : E-Stop when the heartbeat goes silent for > timeout
