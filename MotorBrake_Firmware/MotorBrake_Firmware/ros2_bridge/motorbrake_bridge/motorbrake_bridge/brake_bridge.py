@@ -12,16 +12,19 @@ CAN ID 0x131 (STM32 -> PC, ~20 ms heartbeat) -> /brake_status (motorbrake_msgs/B
         [6..7] uint16  sequence counter (little-endian)
 
 Topic  /servo_command (std_msgs/Float32)      -> CAN ID 0x132  (PC -> STM32)
-        data: angle_deg (0.0–180.0°). This is the "brake engaged" servo
-        position; the STM32 stores it in flash and only drives the servo to it
-        while the relay is ON.
+        data: angle_deg (magnitude 0.0–180.0°). The magnitude is the "brake
+        engaged" servo position; the STM32 stores it in flash. The SIGN is a
+        flag, not a position:
+          +angle (normal): brake ON -> servo to angle, brake OFF -> 0°.
+          -angle (swapped): brake ON -> servo to 0°, brake OFF -> |angle|.
+        e.g. -45 makes "brake OFF" drive to 45° and "brake ON" drive to 0°.
 
 CAN ID 0x133 (STM32 -> PC, same 20 ms tick)  -> BrakeStatus.servo_angle_deg
-        [0..3] float32 brake_angle_deg (little-endian). The angle the STM32 is
-        actually holding: the flash-recalled value at boot, then the live
-        (clamped) /servo_command value after each overwrite. This is the source
-        of truth for servo_angle_deg — the bridge no longer echoes its own
-        command.
+        [0..3] float32 brake_angle_deg (little-endian, signed the same way as
+        /servo_command). The angle the STM32 is actually holding: the flash-
+        recalled value at boot, then the live /servo_command value after each
+        overwrite. This is the source of truth for servo_angle_deg — the bridge
+        no longer echoes its own command.
 
 Fail-safe: if no /brake_status heartbeat arrives for `heartbeat_timeout`
 seconds (default 0.1 s = 100 ms), the bridge raises E-Stop and latches

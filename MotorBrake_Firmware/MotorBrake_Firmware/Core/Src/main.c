@@ -44,14 +44,17 @@
  *     [5]    uint8  watchdog_status(0 = Normal, 1 = Triggered/fault)
  *     [6..7] uint16 heartbeat sequence counter (little-endian)
  * /servo_command (std_msgs/Float32): PC -> STM32, ID 0x132, 4-byte:
- *     [0..3] float32 angle_deg (little-endian, clamped to 0–180°). This is the
- *            "brake engaged" servo position: stored in flash and recalled on
- *            boot. The servo only drives to it while the relay is ON.
+ *     [0..3] float32 angle_deg (little-endian, magnitude clamped to 0–180°). The
+ *            magnitude is the "brake engaged" servo position; stored in flash and
+ *            recalled on boot. The SIGN is a flag, not a position:
+ *              +angle (normal): brake ON -> servo to angle, brake OFF -> 0°.
+ *              -angle (swapped): brake ON -> servo to 0°, brake OFF -> |angle|.
+ *            e.g. -45 makes "brake OFF" drive to 45° and "brake ON" drive to 0°.
  * /servo_status  (std_msgs/Float32): STM32 -> PC, ID 0x133, 4-byte, sent on the
  *            same 20 ms tick as 0x131:
- *     [0..3] float32 brake_angle_deg (little-endian). The angle the STM32 is
- *            actually holding: the flash-recalled value at boot, then the live
- *            (clamped) /servo_command value after each overwrite. */
+ *     [0..3] float32 brake_angle_deg (little-endian, signed). The held engage
+ *            angle, sign-encoded the same way as /servo_command: the flash-
+ *            recalled value at boot, then the live value after each overwrite. */
 #define CAN_ID_BRAKE_CMD      0x130u
 #define CAN_ID_BRAKE_STATUS   0x131u
 #define CAN_ID_SERVO_CMD      0x132u
@@ -135,7 +138,8 @@
 
 /* USER CODE BEGIN PV */
 volatile uint8_t relay_cmd = 0;       // 0 = OFF, 1 = ON. Set by /brake_command over CAN (or Live Expression)
-volatile float   brake_angle_deg = BRAKE_ANGLE_DEFAULT; // engaged servo position, persisted in flash, set by /servo_command
+volatile float   brake_angle_deg = BRAKE_ANGLE_DEFAULT; // engaged servo angle magnitude (0–180°), persisted in flash, set by /servo_command
+volatile uint8_t brake_invert = 0;    // 1 = last /servo_command was negative: swap the engage/release endpoints (ON->0°, OFF->brake_angle_deg)
 volatile uint8_t  flash_save_req = 0;  // set by RX ISR when brake_angle_deg changes; flash write runs in main loop
 volatile uint32_t flash_req_tick = 0;  // HAL tick of the last brake_angle_deg change (debounce reference)
 volatile uint8_t flash_write_ok = 0;  // 1 = last flash write read back OK (visible in Live Expression)
@@ -188,7 +192,9 @@ static float Flash_LoadBrakeAngle(float fallback) {
     uint32_t bits = (uint32_t) (rec >> 32);
     float angle;
     memcpy(&angle, &bits, sizeof(float));
-    if (angle < 0.0f || angle > 180.0f) {
+    /* Signed: the sign carries the engage/release-swap flag, so the valid range
+     * is -180..180. The magnitude is the servo angle. */
+    if (angle < -180.0f || angle > 180.0f) {
         return fallback;
     }
     return angle;
@@ -284,9 +290,12 @@ int main(void)
 	HAL_NVIC_ClearPendingIRQ(EXTI2_IRQn);
 	watchdog_status = 0;            // clear false latch from a floating boot edge
 
-	/* Recall the brake angle saved by the last /servo_command (default 0° if the
-	 * flash page was never written). */
-	brake_angle_deg = Flash_LoadBrakeAngle(BRAKE_ANGLE_DEFAULT);
+	/* Recall the brake angle saved by the last /servo_command (default if the
+	 * flash page was never written). A negative stored value means the
+	 * engage/release endpoints are swapped: split it into magnitude + flag. */
+	float stored_angle = Flash_LoadBrakeAngle(BRAKE_ANGLE_DEFAULT);
+	brake_invert    = (stored_angle < 0.0f) ? 1u : 0u;
+	brake_angle_deg = brake_invert ? -stored_angle : stored_angle;
 
 	CAN_App_Init();                 // ตั้งค่า Filter + Start FDCAN + เปิด RX Interrupt
 	HAL_TIM_Base_Start_IT(&htim6);  // เริ่ม Timer ของ WDI
@@ -310,28 +319,34 @@ int main(void)
 		static float    servo_target  = SERVO_HOME_DEG;
 		static uint32_t release_tick  = 0;
 
+		/* Engage/release endpoints. A negative /servo_command sets brake_invert,
+		 * which swaps them: "brake ON" then drives to 0° and "brake OFF" drives to
+		 * the set angle, instead of the normal ON->angle / OFF->0° behaviour. */
+		float engaged_deg  = brake_invert ? SERVO_HOME_DEG : brake_angle_deg;
+		float released_deg = brake_invert ? brake_angle_deg : SERVO_HOME_DEG;
+
 		if (watchdog_status == 1) {
 			/* E-Stop / latched fault: open relay now, no graceful return. */
 			HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
-			servo_target = SERVO_HOME_DEG;
+			servo_target = released_deg;
 			brake_state  = BRAKE_OFF;
 		} else {
 			switch (brake_state) {
 			case BRAKE_OFF:
 				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
-				servo_target = SERVO_HOME_DEG;
+				servo_target = released_deg;
 				if (relay_cmd == 1) {
 					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
-					servo_target = brake_angle_deg;
+					servo_target = engaged_deg;
 					brake_state  = BRAKE_ON;
 				}
 				break;
 
 			case BRAKE_ON:
 				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
-				servo_target = brake_angle_deg;   /* follow live angle updates */
+				servo_target = engaged_deg;   /* follow live angle updates */
 				if (relay_cmd == 0) {
-					servo_target = SERVO_HOME_DEG; /* drive home before powering off */
+					servo_target = released_deg; /* drive to release position before powering off */
 					release_tick = HAL_GetTick();
 					brake_state  = BRAKE_RELEASING;
 				}
@@ -339,9 +354,9 @@ int main(void)
 
 			case BRAKE_RELEASING:
 				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
-				servo_target = SERVO_HOME_DEG;
+				servo_target = released_deg;
 				if (relay_cmd == 1) {              /* re-engaged mid-release */
-					servo_target = brake_angle_deg;
+					servo_target = engaged_deg;
 					brake_state  = BRAKE_ON;
 				} else if ((HAL_GetTick() - release_tick) >= SERVO_SETTLE_MS) {
 					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
@@ -384,7 +399,7 @@ int main(void)
 			if ((now - oc_over_since) >= OVERCURRENT_TRIP_MS) {
 				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 				relay_cmd    = 0;
-				servo_target = SERVO_HOME_DEG;
+				servo_target = released_deg;
 				brake_state  = BRAKE_OFF;
 			}
 		} else {
@@ -401,7 +416,8 @@ int main(void)
 		 * back-to-back ~22 ms erase stalls (which would drop/delay CAN frames). */
 		if (flash_save_req && (HAL_GetTick() - flash_req_tick) >= FLASH_WRITE_QUIET_MS) {
 			flash_save_req = 0;
-			flash_write_ok = Flash_SaveBrakeAngle(brake_angle_deg);
+			/* Persist signed so the engage/release-swap flag survives a reboot. */
+			flash_write_ok = Flash_SaveBrakeAngle(brake_invert ? -brake_angle_deg : brake_angle_deg);
 			if (flash_write_ok) {
 				led2_blink_ticks = LED2_BLINK_TICKS;  // rapid-blink LED2 as a write ACK
 			}
@@ -574,7 +590,8 @@ static void BrakeStatus_Send(void)
   */
 static void ServoStatus_Send(void)
 {
-	float angle = brake_angle_deg;          /* volatile -> local snapshot */
+	/* Report signed (sign = engage/release-swap flag), matching /servo_command. */
+	float angle = brake_invert ? -brake_angle_deg : brake_angle_deg; /* volatile -> local snapshot */
 	uint8_t TxData[4];
 	memcpy(&TxData[0], &angle, sizeof(float)); /* [0..3] float32, little-endian */
 
@@ -603,10 +620,14 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 			 * the flash persist is debounced in the main loop (FLASH_WRITE_QUIET_MS). */
 			float angle;
 			memcpy(&angle, &RxData[0], sizeof(float));
-			if (angle < 0.0f)   angle = 0.0f;
-			if (angle > 180.0f) angle = 180.0f;
-			if (angle != brake_angle_deg) {
-				brake_angle_deg = angle;
+			/* The sign is a flag: negative swaps the engage/release endpoints.
+			 * Split into magnitude (the servo angle) + invert flag. */
+			uint8_t inv = (angle < 0.0f) ? 1u : 0u;
+			float   mag = inv ? -angle : angle;
+			if (mag > 180.0f) mag = 180.0f;
+			if (mag != brake_angle_deg || inv != brake_invert) {
+				brake_angle_deg = mag;
+				brake_invert    = inv;
 				flash_save_req  = 1;
 				flash_req_tick  = HAL_GetTick();  /* restart the debounce window */
 			}
