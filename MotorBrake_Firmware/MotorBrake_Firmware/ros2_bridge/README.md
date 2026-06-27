@@ -10,7 +10,7 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
  /brake_command  ──Bool──►  brake_bridge  ──CAN 0x130──►  [CAN-USB] ═══►  FDCAN1  ─► Relay
  /brake_status   ◄─BrakeStatus── brake_bridge ◄─CAN 0x131── [CAN-USB] ◄═══  FDCAN1 ◄─ INA240 + state
  /brake_estop    ◄─Bool── (raised by bridge if heartbeat lost > 100 ms)
- /servo_command  ──Float32──►  brake_bridge  ──CAN 0x132──►  [CAN-USB] ═══►  FDCAN1  ─► Servo PWM (engaged pos, saved to flash)
+ /servo_command  ──Float32MultiArray[start,stop]──►  brake_bridge  ──CAN 0x132──►  [CAN-USB] ═══►  FDCAN1  ─► Servo PWM (start/stop pos, saved to flash)
 ```
 
 ## Topics
@@ -18,9 +18,9 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
 | Topic             | Type                              | Direction   | Meaning |
 |-------------------|-----------------------------------|-------------|---------|
 | `/brake_command`  | `std_msgs/msg/Bool`               | PC → STM32  | `true` = Relay ON (engage brake), `false` = Relay OFF (release) |
-| `/brake_status`   | `motorbrake_msgs/msg/BrakeStatus` | STM32 → PC  | `current_ma`, `relay_active`, `watchdog_status`, `servo_angle_deg` (echo of last `/servo_command`) |
+| `/brake_status`   | `motorbrake_msgs/msg/BrakeStatus` | STM32 → PC  | `current_ma`, `relay_active`, `watchdog_status`, `servo_start_deg`/`servo_stop_deg` (angles the STM32 reports holding) |
 | `/brake_estop`    | `std_msgs/msg/Bool`               | bridge → PC | `true` when the bridge has not seen a heartbeat for > 100 ms |
-| `/servo_command`  | `std_msgs/msg/Float32`            | PC → STM32  | "brake engaged" servo angle (0.0–180.0°); saved to STM32 flash, applied while relay is ON |
+| `/servo_command`  | `std_msgs/msg/Float32MultiArray`  | PC → STM32  | `data: [start_deg, stop_deg]`, two servo angles (0.0–180.0°). `start` = brake OFF/released pos, `stop` = brake ON/engaged pos. Saved to STM32 flash |
 
 ## CAN protocol (classic CAN, 1 Mbps, 11-bit IDs)
 
@@ -28,7 +28,8 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
 |---------|------------|-----|---------|
 | `0x130` | PC → STM32 | 1   | `data[0]` = 1 (Relay ON) / 0 (Relay OFF) |
 | `0x131` | STM32 → PC | 8   | `[0..3]` float32 `current_ma` LE, `[4]` `relay_active`, `[5]` `watchdog_status`, `[6..7]` uint16 seq LE |
-| `0x132` | PC → STM32 | 4   | `[0..3]` float32 `angle_deg` LE (engaged servo position, clamped 0–180°, saved to flash) |
+| `0x132` | PC → STM32 | 8   | `[0..3]` float32 `start_deg` LE, `[4..7]` float32 `stop_deg` LE (both clamped 0–180°, saved to flash) |
+| `0x133` | STM32 → PC | 8   | `[0..3]` float32 `start_deg` LE, `[4..7]` float32 `stop_deg` LE (angles the STM32 is holding) |
 
 The STM32 sends `0x131` every ~20 ms (heartbeat). Bitrate, IDs and the 100 ms
 fail-safe timeout are all editable: in firmware via the `#define`s near the top of
@@ -152,11 +153,11 @@ ros2 topic pub -r 10 --times 5 /brake_command std_msgs/msg/Bool "{data: false}"
 # Watch the brake current / status coming back from the STM32
 ros2 topic echo /brake_status
 
-# Move servo to 45° (engaged position; saved to STM32 flash)
-ros2 topic pub -r 10 --times 5 /servo_command std_msgs/msg/Float32 "{data: 45.0}"
+# Set start=0° (brake OFF/released) and stop=5° (brake ON/engaged); saved to flash
+ros2 topic pub -r 10 --times 5 /servo_command std_msgs/msg/Float32MultiArray "{data: [0.0, 5.0]}"
 
-# Move servo to centre (90°)
-ros2 topic pub -r 10 --times 5 /servo_command std_msgs/msg/Float32 "{data: 90.0}"
+# Larger throw: released at 10°, engaged at 90°
+ros2 topic pub -r 10 --times 5 /servo_command std_msgs/msg/Float32MultiArray "{data: [10.0, 90.0]}"
 ```
 
 For real/continuous control, prefer a long-lived publisher (rqt, a GUI button, or

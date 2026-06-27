@@ -3641,3 +3641,15 @@ Command-line arguments:  -os linux -ws gtk -arch x86_64
 
 !ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-06-26 22:21:55.242
 !MESSAGE Started RMI Server, listening on port 41337
+!SESSION 2026-06-27 12:34:56.652 -----------------------------------------------
+eclipse.buildId=Version 2.1.1
+java.version=21.0.9
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=linux, ARCH=x86_64, WS=gtk, NL=en_US
+Command-line arguments:  -os linux -ws gtk -arch x86_64
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-06-27 12:35:01.114
+!MESSAGE Log4j2 initialized with config file /home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/.metadata/.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-06-27 12:35:04.502
+!MESSAGE Started RMI Server, listening on port 41337

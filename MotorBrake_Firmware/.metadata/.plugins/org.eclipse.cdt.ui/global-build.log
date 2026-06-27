@@ -145,3 +145,17 @@ arm-none-eabi-size  MotorBrake_Firmware.elf
   30152	     48	   2192	  32392	   7e88	MotorBrake_Firmware.elf
 Finished building: default.size.stdout
  
+12:35:20 **** Incremental Build of configuration Debug for project MotorBrake_Firmware ****
+make -j20 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32G474xx -c -I../Core/Inc -I../Drivers/STM32G4xx_HAL_Driver/Inc -I../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32G4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+arm-none-eabi-gcc -o "MotorBrake_Firmware.elf" @"objects.list"   -mcpu=cortex-m4 -T"/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware/STM32G474RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MotorBrake_Firmware.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: MotorBrake_Firmware.elf
+ 
+arm-none-eabi-size  MotorBrake_Firmware.elf 
+arm-none-eabi-objdump -h -S MotorBrake_Firmware.elf  > "MotorBrake_Firmware.list"
+   text	   data	    bss	    dec	    hex	filename
+  30308	     48	   2200	  32556	   7f2c	MotorBrake_Firmware.elf
+Finished building: default.size.stdout
+ 
+Finished building: MotorBrake_Firmware.list
+ 

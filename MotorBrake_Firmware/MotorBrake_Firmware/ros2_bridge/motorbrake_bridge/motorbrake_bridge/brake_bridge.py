@@ -11,20 +11,20 @@ CAN ID 0x131 (STM32 -> PC, ~20 ms heartbeat) -> /brake_status (motorbrake_msgs/B
         [5]    uint8   watchdog_status (0 = Normal, 1 = Triggered)
         [6..7] uint16  sequence counter (little-endian)
 
-Topic  /servo_command (std_msgs/Float32)      -> CAN ID 0x132  (PC -> STM32)
-        data: angle_deg (magnitude 0.0–180.0°). The magnitude is the "brake
-        engaged" servo position; the STM32 stores it in flash. The SIGN is a
-        flag, not a position:
-          +angle (normal): brake ON -> servo to angle, brake OFF -> 0°.
-          -angle (swapped): brake ON -> servo to 0°, brake OFF -> |angle|.
-        e.g. -45 makes "brake OFF" drive to 45° and "brake ON" drive to 0°.
+Topic  /servo_command (std_msgs/Float32MultiArray) -> CAN ID 0x132  (PC -> STM32)
+        data: [start_deg, stop_deg], two independent servo angles 0.0–180.0°.
+        The STM32 stores both in flash. There is no polarity/sign flag any more:
+          start_deg : servo position when brake OFF/released (relay open).
+          stop_deg  : servo position when brake ON/engaged  (relay closed).
+        e.g. [0.0, 5.0] -> brake OFF drives to 0°, brake ON drives to 5°.
+        Packed little-endian as [0..3] float32 start, [4..7] float32 stop.
 
-CAN ID 0x133 (STM32 -> PC, same 20 ms tick)  -> BrakeStatus.servo_angle_deg
-        [0..3] float32 brake_angle_deg (little-endian, signed the same way as
-        /servo_command). The angle the STM32 is actually holding: the flash-
-        recalled value at boot, then the live /servo_command value after each
-        overwrite. This is the source of truth for servo_angle_deg — the bridge
-        no longer echoes its own command.
+CAN ID 0x133 (STM32 -> PC, same 20 ms tick)  -> BrakeStatus.servo_start_deg /
+                                                 BrakeStatus.servo_stop_deg
+        [0..3] float32 start_deg, [4..7] float32 stop_deg (little-endian). The
+        angles the STM32 is actually holding: the flash-recalled values at boot,
+        then the live /servo_command values after each overwrite. This is the
+        source of truth — the bridge no longer echoes its own command.
 
 Fail-safe: if no /brake_status heartbeat arrives for `heartbeat_timeout`
 seconds (default 0.1 s = 100 ms), the bridge raises E-Stop and latches
@@ -42,7 +42,7 @@ import threading
 import can
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32
+from std_msgs.msg import Bool, Float32MultiArray
 from motorbrake_msgs.msg import BrakeStatus
 
 
@@ -93,12 +93,13 @@ class BrakeBridge(Node):
         self.cmd_sub = self.create_subscription(
             Bool, 'brake_command', self.on_brake_command, 10)
         self.servo_cmd_sub = self.create_subscription(
-            Float32, 'servo_command', self.on_servo_command, 10)
+            Float32MultiArray, 'servo_command', self.on_servo_command, 10)
 
         # ---- Heartbeat / fail-safe state --------------------------------
         self._last_status_time = None      # monotonic time of last RX, None until first frame
         self._estop_active = False
-        self._servo_angle_deg = 0.0        # angle the STM32 reports holding (CAN 0x133)
+        self._servo_start_deg = 0.0        # start angle the STM32 reports holding (CAN 0x133)
+        self._servo_stop_deg = 0.0         # stop  angle the STM32 reports holding (CAN 0x133)
         self._lock = threading.Lock()
 
         # Check the heartbeat at twice the timeout rate.
@@ -130,8 +131,15 @@ class BrakeBridge(Node):
     # ---------------------------------------------------------------------
     # PC -> STM32 : /servo_command -> CAN 0x132
     # ---------------------------------------------------------------------
-    def on_servo_command(self, msg: Float32):
-        data = struct.pack('<f', msg.data)
+    def on_servo_command(self, msg: Float32MultiArray):
+        if len(msg.data) < 2:
+            self.get_logger().warn(
+                f'/servo_command needs [start_deg, stop_deg], got {len(msg.data)} '
+                'value(s); ignored')
+            return
+        start_deg = float(msg.data[0])
+        stop_deg = float(msg.data[1])
+        data = struct.pack('<ff', start_deg, stop_deg)
         frame = can.Message(
             arbitration_id=self.servo_cmd_can_id,
             data=data,
@@ -140,7 +148,8 @@ class BrakeBridge(Node):
         try:
             self.bus.send(frame)
             self.get_logger().debug(
-                f'/servo_command -> {msg.data:.1f}° (CAN 0x{self.servo_cmd_can_id:03X})')
+                f'/servo_command -> start {start_deg:.1f}°, stop {stop_deg:.1f}° '
+                f'(CAN 0x{self.servo_cmd_can_id:03X})')
         except can.CanError as exc:
             self.get_logger().error(f'Failed to send servo command: {exc}')
 
@@ -177,7 +186,8 @@ class BrakeBridge(Node):
         status.current_ma = float(current_ma)
         status.relay_active = relay_active
         status.watchdog_status = watchdog_status
-        status.servo_angle_deg = self._servo_angle_deg  # echo of last /servo_command
+        status.servo_start_deg = self._servo_start_deg  # held start angle (CAN 0x133)
+        status.servo_stop_deg = self._servo_stop_deg    # held stop  angle (CAN 0x133)
         self.status_pub.publish(status)
 
         with self._lock:
@@ -193,13 +203,15 @@ class BrakeBridge(Node):
                 throttle_duration_sec=1.0)
 
     def _handle_servo_status(self, frame):
-        if len(frame.data) < 4:
+        if len(frame.data) < 8:
             self.get_logger().warn(
                 f'Short servo_status frame ({len(frame.data)} bytes), ignored')
             return
-        # Held angle reported by the STM32: flash value at boot, live command after.
-        # Read in the same _rx_loop thread as _handle_brake_status, so no lock needed.
-        self._servo_angle_deg = struct.unpack('<f', bytes(frame.data[0:4]))[0]
+        # Held start/stop angles reported by the STM32: flash values at boot, live
+        # command after. Read in the same _rx_loop thread as _handle_brake_status,
+        # so no lock needed.
+        self._servo_start_deg, self._servo_stop_deg = struct.unpack(
+            '<ff', bytes(frame.data[0:8]))
 
     # ---------------------------------------------------------------------
     # Fail-safe : E-Stop when the heartbeat goes silent for > timeout

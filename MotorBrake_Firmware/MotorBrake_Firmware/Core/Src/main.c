@@ -43,18 +43,20 @@
  *     [4]    uint8  relay_active   (1 = Relay G2R-24 ON, 0 = OFF)
  *     [5]    uint8  watchdog_status(0 = Normal, 1 = Triggered/fault)
  *     [6..7] uint16 heartbeat sequence counter (little-endian)
- * /servo_command (std_msgs/Float32): PC -> STM32, ID 0x132, 4-byte:
- *     [0..3] float32 angle_deg (little-endian, magnitude clamped to 0–180°). The
- *            magnitude is the "brake engaged" servo position; stored in flash and
- *            recalled on boot. The SIGN is a flag, not a position:
- *              +angle (normal): brake ON -> servo to angle, brake OFF -> 0°.
- *              -angle (swapped): brake ON -> servo to 0°, brake OFF -> |angle|.
- *            e.g. -45 makes "brake OFF" drive to 45° and "brake ON" drive to 0°.
- * /servo_status  (std_msgs/Float32): STM32 -> PC, ID 0x133, 4-byte, sent on the
- *            same 20 ms tick as 0x131:
- *     [0..3] float32 brake_angle_deg (little-endian, signed). The held engage
- *            angle, sign-encoded the same way as /servo_command: the flash-
- *            recalled value at boot, then the live value after each overwrite. */
+ * /servo_command : PC -> STM32, ID 0x132, 8-byte. Two independent servo angles,
+ *            each a little-endian float32 clamped to 0–180°. Stored in flash and
+ *            recalled on boot:
+ *     [0..3] float32 start_deg : servo position when the brake is OFF/released
+ *            (relay open, motor free to start).
+ *     [4..7] float32 stop_deg  : servo position when the brake is ON/engaged
+ *            (relay closed, motor stopped).
+ *            There is no polarity/sign flag any more — start and stop are set
+ *            directly and independently.
+ * /servo_status  : STM32 -> PC, ID 0x133, 8-byte, sent on the same 20 ms tick as
+ *            0x131. The held start/stop angles (flash-recalled at boot, then the
+ *            live values after each overwrite), same layout as /servo_command:
+ *     [0..3] float32 start_deg (little-endian)
+ *     [4..7] float32 stop_deg  (little-endian) */
 #define CAN_ID_BRAKE_CMD      0x130u
 #define CAN_ID_BRAKE_STATUS   0x131u
 #define CAN_ID_SERVO_CMD      0x132u
@@ -94,23 +96,28 @@
 /* Heartbeat: TIM6 elapses every 10 ms, so 2 ticks -> 20 ms status rate. */
 #define HEARTBEAT_TICKS       2u
 
-/* On a normal release (relay commanded OFF) the servo is driven back to 0° and
- * we keep the relay energised for this long so it can physically get there
- * before power is cut. Faults (E-Stop/overcurrent) skip this and cut at once. */
+/* On a normal release (relay commanded OFF) the servo is driven back to the
+ * start position and we keep the relay energised for this long so it can
+ * physically get there before power is cut. Faults (E-Stop/overcurrent) skip
+ * this and cut at once. */
 #define SERVO_SETTLE_MS       3000u
-#define SERVO_HOME_DEG        0.0f
 
-/* Persisted "brake engaged" servo angle, stored in the last 2 KB page of bank 2.
+/* Persisted start/stop servo angles, stored in the last 2 KB page of bank 2.
  * NOTE: the G474 has no read-while-write, so a page erase (~22 ms) stalls the
  * whole CPU — interrupts included — for its duration. To avoid stalling during a
  * burst of /servo_command frames (which would make CAN look unresponsive), the
- * write is debounced: we only commit once the angle has been stable for
- * FLASH_WRITE_QUIET_MS. One 64-bit record: [31:0] magic, [63:32] float. */
+ * write is debounced: we only commit once the angles have been stable for
+ * FLASH_WRITE_QUIET_MS. Two 64-bit records:
+ *   DW0: [31:0] magic, [63:32] start_deg float
+ *   DW1: [31:0] stop_deg float, [63:32] magic
+ * MAGIC bumped from the old single-angle format so a stale flash page from the
+ * previous firmware is rejected and we fall back to the defaults. */
 #define FLASH_USER_ADDR       0x0807F800UL
 #define FLASH_USER_BANK       FLASH_BANK_2
 #define FLASH_USER_PAGE       127u
-#define FLASH_USER_MAGIC      0xB7A4E001UL
-#define BRAKE_ANGLE_DEFAULT   45.0f
+#define FLASH_USER_MAGIC      0xB7A4E002UL
+#define START_ANGLE_DEFAULT   0.0f
+#define STOP_ANGLE_DEFAULT    5.0f
 #define FLASH_WRITE_QUIET_MS  800u
 
 /* On a verified flash write, blink LED2 rapidly for a moment as a visual ACK.
@@ -138,10 +145,10 @@
 
 /* USER CODE BEGIN PV */
 volatile uint8_t relay_cmd = 0;       // 0 = OFF, 1 = ON. Set by /brake_command over CAN (or Live Expression)
-volatile float   brake_angle_deg = BRAKE_ANGLE_DEFAULT; // engaged servo angle magnitude (0–180°), persisted in flash, set by /servo_command
-volatile uint8_t brake_invert = 0;    // 1 = last /servo_command was negative: swap the engage/release endpoints (ON->0°, OFF->brake_angle_deg)
-volatile uint8_t  flash_save_req = 0;  // set by RX ISR when brake_angle_deg changes; flash write runs in main loop
-volatile uint32_t flash_req_tick = 0;  // HAL tick of the last brake_angle_deg change (debounce reference)
+volatile float   start_angle_deg = START_ANGLE_DEFAULT; // servo angle when brake OFF/released (0–180°), persisted in flash, set by /servo_command
+volatile float   stop_angle_deg  = STOP_ANGLE_DEFAULT;  // servo angle when brake ON/engaged  (0–180°), persisted in flash, set by /servo_command
+volatile uint8_t  flash_save_req = 0;  // set by RX ISR when start/stop angle changes; flash write runs in main loop
+volatile uint32_t flash_req_tick = 0;  // HAL tick of the last start/stop angle change (debounce reference)
 volatile uint8_t flash_write_ok = 0;  // 1 = last flash write read back OK (visible in Live Expression)
 volatile uint16_t led2_blink_ticks = 0; // >0 = LED2 rapid-blink countdown (10 ms ticks), set on a verified write
 uint16_t adc_buffer[4];     // สร้าง Buffer รอรับค่าจาก ADC DMA
@@ -149,9 +156,9 @@ uint16_t led_counter = 0;
 
 /* Relay/servo release sequencer state (driven in the main loop). */
 typedef enum {
-	BRAKE_OFF = 0,    // relay open, servo parked at 0°
-	BRAKE_ON,         // relay closed, servo driven to brake_angle_deg
-	BRAKE_RELEASING   // servo driving back to 0°, relay still on until settle elapses
+	BRAKE_OFF = 0,    // relay open, servo parked at start_angle_deg
+	BRAKE_ON,         // relay closed, servo driven to stop_angle_deg
+	BRAKE_RELEASING   // servo driving back to start_angle_deg, relay still on until settle elapses
 } brake_state_t;
 
 /* --- Brake status / safety state shared with the ISRs --- */
@@ -169,9 +176,9 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 static void  CAN_App_Init(void);          // FDCAN filter + start + RX notification
 static void  BrakeStatus_Send(void);      // pack and transmit the /brake_status heartbeat frame
-static void  ServoStatus_Send(void);      // transmit the held brake angle (0x133)
-static float   Flash_LoadBrakeAngle(float fallback); // recall the persisted brake angle on boot
-static uint8_t Flash_SaveBrakeAngle(float angle);    // persist the brake angle; returns 1 if readback verifies
+static void  ServoStatus_Send(void);      // transmit the held start/stop angles (0x133)
+static void    Flash_LoadAngles(float *start_out, float *stop_out); // recall persisted start/stop on boot (defaults if unset)
+static uint8_t Flash_SaveAngles(float start_deg, float stop_deg);   // persist start/stop; returns 1 if readback verifies
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -182,32 +189,50 @@ static uint32_t deg_to_pulse(float deg) {
     return (uint32_t)(1000.0f + deg * (1000.0f / 180.0f));
 }
 
-/* Read the persisted brake angle. Returns `fallback` if the page was never
- * written (magic mismatch) or holds an out-of-range value. */
-static float Flash_LoadBrakeAngle(float fallback) {
-    uint64_t rec = *(__IO uint64_t *) FLASH_USER_ADDR;
-    if ((uint32_t) (rec & 0xFFFFFFFFUL) != FLASH_USER_MAGIC) {
-        return fallback;
-    }
-    uint32_t bits = (uint32_t) (rec >> 32);
-    float angle;
-    memcpy(&angle, &bits, sizeof(float));
-    /* Signed: the sign carries the engage/release-swap flag, so the valid range
-     * is -180..180. The magnitude is the servo angle. */
-    if (angle < -180.0f || angle > 180.0f) {
-        return fallback;
-    }
-    return angle;
+/* Pack a float + the magic into one 64-bit record. The float occupies the upper
+ * 32 bits and the magic the lower 32 (DW0); the stop record stores them swapped
+ * (DW1) so both records carry a magic to validate against. */
+static uint64_t flash_pack_dw0(float f) {   /* [31:0]=magic, [63:32]=float */
+    uint32_t bits;
+    memcpy(&bits, &f, sizeof(float));
+    return ((uint64_t) bits << 32) | (uint64_t) FLASH_USER_MAGIC;
+}
+static uint64_t flash_pack_dw1(float f) {   /* [31:0]=float, [63:32]=magic */
+    uint32_t bits;
+    memcpy(&bits, &f, sizeof(float));
+    return ((uint64_t) FLASH_USER_MAGIC << 32) | (uint64_t) bits;
 }
 
-/* Erase the user page and store the brake angle as one 64-bit record. The ~22 ms
- * page erase stalls the whole CPU (no RWW on the G474), so callers must debounce
- * this — see FLASH_WRITE_QUIET_MS. Reads the record back and returns 1 only if it
- * matches what we intended to write. */
-static uint8_t Flash_SaveBrakeAngle(float angle) {
-    uint32_t bits;
-    memcpy(&bits, &angle, sizeof(float));
-    uint64_t rec = ((uint64_t) bits << 32) | (uint64_t) FLASH_USER_MAGIC;
+/* Read the persisted start/stop angles. Falls back to the defaults if the page
+ * was never written (magic mismatch in either record) or holds out-of-range
+ * values. */
+static void Flash_LoadAngles(float *start_out, float *stop_out) {
+    *start_out = START_ANGLE_DEFAULT;
+    *stop_out  = STOP_ANGLE_DEFAULT;
+
+    uint64_t dw0 = *(__IO uint64_t *) FLASH_USER_ADDR;
+    uint64_t dw1 = *(__IO uint64_t *) (FLASH_USER_ADDR + 8u);
+    if ((uint32_t) (dw0 & 0xFFFFFFFFUL) != FLASH_USER_MAGIC ||
+        (uint32_t) (dw1 >> 32)          != FLASH_USER_MAGIC) {
+        return;  /* never written / wrong format -> keep defaults */
+    }
+
+    uint32_t sbits = (uint32_t) (dw0 >> 32);
+    uint32_t tbits = (uint32_t) (dw1 & 0xFFFFFFFFUL);
+    float s, t;
+    memcpy(&s, &sbits, sizeof(float));
+    memcpy(&t, &tbits, sizeof(float));
+    if (s >= 0.0f && s <= 180.0f) *start_out = s;
+    if (t >= 0.0f && t <= 180.0f) *stop_out  = t;
+}
+
+/* Erase the user page and store the start/stop angles as two 64-bit records. The
+ * ~22 ms page erase stalls the whole CPU (no RWW on the G474), so callers must
+ * debounce this — see FLASH_WRITE_QUIET_MS. Reads both records back and returns 1
+ * only if they match what we intended to write. */
+static uint8_t Flash_SaveAngles(float start_deg, float stop_deg) {
+    uint64_t dw0 = flash_pack_dw0(start_deg);
+    uint64_t dw1 = flash_pack_dw1(stop_deg);
 
     FLASH_EraseInitTypeDef erase = {0};
     uint32_t page_err = 0;
@@ -219,12 +244,17 @@ static uint8_t Flash_SaveBrakeAngle(float angle) {
     HAL_StatusTypeDef st = HAL_ERROR;
     HAL_FLASH_Unlock();
     if (HAL_FLASHEx_Erase(&erase, &page_err) == HAL_OK) {
-        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, FLASH_USER_ADDR, rec);
+        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, FLASH_USER_ADDR, dw0);
+        if (st == HAL_OK) {
+            st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, FLASH_USER_ADDR + 8u, dw1);
+        }
     }
     HAL_FLASH_Lock();
 
-    /* Verify: the programmed doubleword must read back exactly. */
-    return (st == HAL_OK && *(__IO uint64_t *) FLASH_USER_ADDR == rec) ? 1u : 0u;
+    /* Verify: both programmed doublewords must read back exactly. */
+    return (st == HAL_OK &&
+            *(__IO uint64_t *) FLASH_USER_ADDR        == dw0 &&
+            *(__IO uint64_t *) (FLASH_USER_ADDR + 8u) == dw1) ? 1u : 0u;
 }
 /* USER CODE END 0 */
 
@@ -290,12 +320,12 @@ int main(void)
 	HAL_NVIC_ClearPendingIRQ(EXTI2_IRQn);
 	watchdog_status = 0;            // clear false latch from a floating boot edge
 
-	/* Recall the brake angle saved by the last /servo_command (default if the
-	 * flash page was never written). A negative stored value means the
-	 * engage/release endpoints are swapped: split it into magnitude + flag. */
-	float stored_angle = Flash_LoadBrakeAngle(BRAKE_ANGLE_DEFAULT);
-	brake_invert    = (stored_angle < 0.0f) ? 1u : 0u;
-	brake_angle_deg = brake_invert ? -stored_angle : stored_angle;
+	/* Recall the start/stop angles saved by the last /servo_command (defaults if
+	 * the flash page was never written). */
+	float loaded_start, loaded_stop;
+	Flash_LoadAngles(&loaded_start, &loaded_stop);
+	start_angle_deg = loaded_start;
+	stop_angle_deg  = loaded_stop;
 
 	CAN_App_Init();                 // ตั้งค่า Filter + Start FDCAN + เปิด RX Interrupt
 	HAL_TIM_Base_Start_IT(&htim6);  // เริ่ม Timer ของ WDI
@@ -316,14 +346,14 @@ int main(void)
 		 *   RELEASING -> OFF   : after SERVO_SETTLE_MS the relay opens
 		 * A fault (watchdog_status=1) cuts the relay immediately from any state. */
 		static brake_state_t brake_state = BRAKE_OFF;
-		static float    servo_target  = SERVO_HOME_DEG;
+		static float    servo_target  = START_ANGLE_DEFAULT;
 		static uint32_t release_tick  = 0;
 
-		/* Engage/release endpoints. A negative /servo_command sets brake_invert,
-		 * which swaps them: "brake ON" then drives to 0° and "brake OFF" drives to
-		 * the set angle, instead of the normal ON->angle / OFF->0° behaviour. */
-		float engaged_deg  = brake_invert ? SERVO_HOME_DEG : brake_angle_deg;
-		float released_deg = brake_invert ? brake_angle_deg : SERVO_HOME_DEG;
+		/* Engage/release endpoints, set independently via /servo_command:
+		 *   brake ON  (engaged) -> stop_deg
+		 *   brake OFF (released)-> start_deg */
+		float engaged_deg  = stop_angle_deg;
+		float released_deg = start_angle_deg;
 
 		if (watchdog_status == 1) {
 			/* E-Stop / latched fault: open relay now, no graceful return. */
@@ -409,15 +439,14 @@ int main(void)
 		/* Drive the servo PWM to the sequencer's current target. */
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, deg_to_pulse(servo_target));
 
-		/* Persist a freshly received brake angle outside the RX ISR. Erasing
+		/* Persist freshly received start/stop angles outside the RX ISR. Erasing
 		 * bank 2 is RWW-safe, so this does not stall the heartbeat below. */
-		/* Debounced flash persist: commit only after the angle has been stable for
+		/* Debounced flash persist: commit only after the angles have been stable for
 		 * FLASH_WRITE_QUIET_MS, so a burst of /servo_command frames does not trigger
 		 * back-to-back ~22 ms erase stalls (which would drop/delay CAN frames). */
 		if (flash_save_req && (HAL_GetTick() - flash_req_tick) >= FLASH_WRITE_QUIET_MS) {
 			flash_save_req = 0;
-			/* Persist signed so the engage/release-swap flag survives a reboot. */
-			flash_write_ok = Flash_SaveBrakeAngle(brake_invert ? -brake_angle_deg : brake_angle_deg);
+			flash_write_ok = Flash_SaveAngles(start_angle_deg, stop_angle_deg);
 			if (flash_write_ok) {
 				led2_blink_ticks = LED2_BLINK_TICKS;  // rapid-blink LED2 as a write ACK
 			}
@@ -541,10 +570,10 @@ static void CAN_App_Init(void)
 	CanTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
 	CanTxHeader.MessageMarker = 0;
 
-	/* Servo-status frame (0x133): 4-byte float32 of the held brake angle. */
+	/* Servo-status frame (0x133): 8-byte, two float32 (start_deg, stop_deg). */
 	CanServoTxHeader = CanTxHeader;
 	CanServoTxHeader.Identifier = CAN_ID_SERVO_STATUS;
-	CanServoTxHeader.DataLength = FDCAN_DLC_BYTES_4;
+	CanServoTxHeader.DataLength = FDCAN_DLC_BYTES_8;
 
 	if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
 		Error_Handler();
@@ -585,15 +614,16 @@ static void BrakeStatus_Send(void)
 }
 
 /**
-  * @brief Report the held brake angle (0x133): flash value at boot, then the
-  *        live /servo_command value after each overwrite.
+  * @brief Report the held start/stop angles (0x133): flash values at boot, then
+  *        the live /servo_command values after each overwrite.
   */
 static void ServoStatus_Send(void)
 {
-	/* Report signed (sign = engage/release-swap flag), matching /servo_command. */
-	float angle = brake_invert ? -brake_angle_deg : brake_angle_deg; /* volatile -> local snapshot */
-	uint8_t TxData[4];
-	memcpy(&TxData[0], &angle, sizeof(float)); /* [0..3] float32, little-endian */
+	float s = start_angle_deg;   /* volatile -> local snapshot */
+	float t = stop_angle_deg;
+	uint8_t TxData[8];
+	memcpy(&TxData[0], &s, sizeof(float)); /* [0..3] float32 start_deg, little-endian */
+	memcpy(&TxData[4], &t, sizeof(float)); /* [4..7] float32 stop_deg,  little-endian */
 
 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanServoTxHeader, TxData);
 }
@@ -616,18 +646,19 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 			/* std_msgs/Bool: data:true -> Relay ON (engage), data:false -> Relay OFF. */
 			relay_cmd = (RxData[0] != 0u) ? 1u : 0u;
 		} else if (RxHeader.Identifier == CAN_ID_SERVO_CMD) {
-			/* std_msgs/Float32: new "brake engaged" angle. Takes effect immediately;
+			/* 8-byte: [0..3] start_deg, [4..7] stop_deg. Takes effect immediately;
 			 * the flash persist is debounced in the main loop (FLASH_WRITE_QUIET_MS). */
-			float angle;
-			memcpy(&angle, &RxData[0], sizeof(float));
-			/* The sign is a flag: negative swaps the engage/release endpoints.
-			 * Split into magnitude (the servo angle) + invert flag. */
-			uint8_t inv = (angle < 0.0f) ? 1u : 0u;
-			float   mag = inv ? -angle : angle;
-			if (mag > 180.0f) mag = 180.0f;
-			if (mag != brake_angle_deg || inv != brake_invert) {
-				brake_angle_deg = mag;
-				brake_invert    = inv;
+			float new_start, new_stop;
+			memcpy(&new_start, &RxData[0], sizeof(float));
+			memcpy(&new_stop,  &RxData[4], sizeof(float));
+			/* Clamp both to the valid servo range 0..180°. */
+			if (new_start < 0.0f) new_start = 0.0f;
+			if (new_start > 180.0f) new_start = 180.0f;
+			if (new_stop  < 0.0f) new_stop  = 0.0f;
+			if (new_stop  > 180.0f) new_stop  = 180.0f;
+			if (new_start != start_angle_deg || new_stop != stop_angle_deg) {
+				start_angle_deg = new_start;
+				stop_angle_deg  = new_stop;
 				flash_save_req  = 1;
 				flash_req_tick  = HAL_GetTick();  /* restart the debounce window */
 			}
