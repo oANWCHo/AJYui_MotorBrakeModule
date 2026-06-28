@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">&#x0A;<refactoring comment="Delete resource &apos;MotorBrake_Firmware&apos;" deleteContents="false" description="Delete resource &apos;MotorBrake_Firmware&apos;" element1="/MotorBrake_Firmware" flags="7" id="org.eclipse.ltk.core.refactoring.delete.resources" resources="1" stamp="1782655413259"/>&#x0A;<refactoring comment="Delete resource &apos;ros2_bridge&apos;" deleteContents="false" description="Delete resource &apos;ros2_bridge&apos;" element1="/ros2_bridge" flags="7" id="org.eclipse.ltk.core.refactoring.delete.resources" resources="1" stamp="1782655417100"/>
+</session>

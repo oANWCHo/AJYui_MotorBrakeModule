@@ -116,8 +116,8 @@
 #define FLASH_USER_BANK       FLASH_BANK_2
 #define FLASH_USER_PAGE       127u
 #define FLASH_USER_MAGIC      0xB7A4E002UL
-#define START_ANGLE_DEFAULT   0.0f
-#define STOP_ANGLE_DEFAULT    5.0f
+#define START_ANGLE_DEFAULT   180.0f
+#define STOP_ANGLE_DEFAULT    110.0f
 #define FLASH_WRITE_QUIET_MS  800u
 
 /* On a verified flash write, blink LED2 rapidly for a moment as a visual ACK.
