@@ -59,6 +59,7 @@ extern DMA_HandleTypeDef hdma_adc1;
 extern TIM_HandleTypeDef htim6;
 /* USER CODE BEGIN EV */
 extern FDCAN_HandleTypeDef hfdcan1;
+extern TIM_HandleTypeDef htim2;   /* speed-sensor input capture (TIM2 CH1) */
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -251,5 +252,17 @@ void TIM6_DAC_IRQHandler(void)
 void FDCAN1_IT0_IRQHandler(void)
 {
   HAL_FDCAN_IRQHandler(&hfdcan1);
+}
+
+/**
+  * @brief This function handles TIM2 global interrupt (speed-sensor input capture).
+  * @note  Placed in USER CODE (and its NVIC line enabled from main USER CODE 2)
+  *        so it survives CubeMX regeneration. If you later enable the TIM2
+  *        interrupt in CubeMX's NVIC tab, delete this copy to avoid a duplicate
+  *        TIM2_IRQHandler symbol.
+  */
+void TIM2_IRQHandler(void)
+{
+  HAL_TIM_IRQHandler(&htim2);
 }
 /* USER CODE END 1 */

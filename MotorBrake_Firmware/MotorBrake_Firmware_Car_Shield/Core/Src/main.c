@@ -28,6 +28,9 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>   // memcpy() for packing the float current into the CAN frame
 #include "flash_store.h"   // persist start/stop servo angles in flash (split-out lib)
+#include "curtis_io.h"     // read/drive Curtis 1510 direction/pedal/MCOR/speed-sensor
+#include "tim.h"           // htim2 + MX_TIM2_Init() for the speed-sensor input capture
+#include "i2c.h"           // hi2c2 + MX_I2C2_Init() for the MCP4725 MCOR-out DAC
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -77,6 +80,10 @@
 #define CURRENT_V_PER_A       (INA240_GAIN * SHUNT_OHMS)   /* 0.1 V/A */
 #define CURRENT_OFFSET_V      0.0f                         /* unidirectional */
 #define CURRENT_ADC_INDEX     0u
+
+/* Curtis 1510 MCOR throttle wiper: wired to PA1 = ADC1_IN2 = regular rank 2, so
+ * it lands in adc_buffer[1] (see the ADC1 rank order above). */
+#define MCOR_ADC_INDEX        1u
 
 /* Open-load / motor-fault check: Relay commanded ON but ~no current flowing.
  * Temporarily disabled (set to 1 to re-enable once a real load is connected). */
@@ -165,6 +172,13 @@ uint16_t          heartbeat_seq = 0;     // rolling counter so the PC can detect
 
 FDCAN_TxHeaderTypeDef CanTxHeader;        // configured once in CAN_App_Init() — used for 0x131
 FDCAN_TxHeaderTypeDef CanServoTxHeader;   // configured once in CAN_App_Init() — used for 0x133
+
+/* --- Curtis 1510 input readings, refreshed each main-loop pass (Live Expression) --- */
+volatile uint8_t curtis_forward  = 0;   // Forward_IN_to_MCU  (PC5) raw level
+volatile uint8_t curtis_backward = 0;   // Backward_IN_to_MCU (PC4) raw level
+volatile uint8_t curtis_pedal    = 0;   // Pedal_IN_to_MCU    (PB0) raw level
+volatile float   mcor_volts      = 0.0f;// MCOR throttle wiper (PA1/IN2), volts
+volatile float   speed_sensor_hz = 0.0f;// Speed_Sensor_to_MCU (PA15/TIM2 CH1), pulse Hz
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -220,8 +234,14 @@ int main(void)
   MX_FDCAN1_Init();
   MX_TIM1_Init();
   MX_TIM6_Init();
+  MX_TIM2_Init();   /* speed-sensor input capture (TIM2 CH1 / PA15) */
 
   /* USER CODE BEGIN 2 */
+	/* MCP4725 MCOR-out DAC lives on I2C2. CubeMX did not emit MX_I2C2_Init() in
+	 * the generated block, so bring it up here (USER CODE = regen-safe) before any
+	 * CurtisIO_McorWrite*() call. */
+	MX_I2C2_Init();
+
 	/* PC1 = local toggle button (active-high, internal pull-down). Configured
 	 * here in USER CODE so it survives CubeMX regeneration of gpio.c (CubeMX
 	 * generates this pin as USER_SW with GPIO_NOPULL). */
@@ -260,6 +280,13 @@ int main(void)
 	HAL_TIM_Base_Start_IT(&htim6);  // เริ่ม Timer ของ WDI
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1); // เริ่ม PWM ของ Servo
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*) adc_buffer, 4);
+
+	/* Speed sensor (PA15 -> TIM2 CH1): start input capture with interrupt. CubeMX
+	 * generated TIM2 without its NVIC line enabled, so enable it here (USER CODE =
+	 * regen-safe). The TIM2_IRQHandler lives in stm32g4xx_it.c (also USER CODE). */
+	HAL_NVIC_SetPriority(TIM2_IRQn, 5, 0);
+	HAL_NVIC_EnableIRQ(TIM2_IRQn);
+	HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -380,6 +407,18 @@ int main(void)
 				led2_blink_ticks = LED2_BLINK_TICKS;  // rapid-blink LED2 as a write ACK
 			}
 		}
+
+		/* Refresh the Curtis 1510 input readings (Live Expression / future use):
+		 *   - Forward/Backward/Pedal digital lines (raw pin levels)
+		 *   - MCOR throttle wiper voltage (ADC1_IN2 via the DMA buffer)
+		 *   - speed-sensor pulse frequency (TIM2 CH1 input capture) */
+		CurtisDigitalInputs_t curtis_in;
+		CurtisIO_ReadDigital(&curtis_in);
+		curtis_forward  = curtis_in.forward;
+		curtis_backward = curtis_in.backward;
+		curtis_pedal    = curtis_in.pedal;
+		mcor_volts      = CurtisIO_McorVolts(adc_buffer[MCOR_ADC_INDEX]);
+		speed_sensor_hz = CurtisIO_SpeedHz();
 
 		/* Transmit the held servo angle (0x133) + /brake_status heartbeat on the
 		 * 20 ms tick. 0x133 goes FIRST so the bridge has the current angle in
@@ -592,6 +631,17 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 				flash_req_tick  = HAL_GetTick();  /* restart the debounce window */
 			}
 		}
+	}
+}
+
+/**
+  * @brief TIM input-capture callback: speed sensor edges on TIM2 CH1 (PA15).
+  *        Hands each captured counter value to the curtis_io speed tracker.
+  */
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+	if (htim->Instance == TIM2 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1) {
+		CurtisIO_SpeedOnCapture(HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1));
 	}
 }
 
