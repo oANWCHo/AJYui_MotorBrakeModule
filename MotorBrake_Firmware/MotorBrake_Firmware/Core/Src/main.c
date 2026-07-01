@@ -27,6 +27,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>   // memcpy() for packing the float current into the CAN frame
+#include "flash_store.h"   // persist start/stop servo angles in flash (split-out lib)
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,22 +103,17 @@
  * this and cut at once. */
 #define SERVO_SETTLE_MS       3000u
 
-/* Persisted start/stop servo angles, stored in the last 2 KB page of bank 2.
+/* Persisted start/stop servo angles: the flash layout, magic and load/save logic
+ * live in the flash_store.[ch] library. What stays here is the app-level policy
+ * for *when* to commit.
  * NOTE: the G474 has no read-while-write, so a page erase (~22 ms) stalls the
  * whole CPU — interrupts included — for its duration. To avoid stalling during a
  * burst of /servo_command frames (which would make CAN look unresponsive), the
  * write is debounced: we only commit once the angles have been stable for
- * FLASH_WRITE_QUIET_MS. Two 64-bit records:
- *   DW0: [31:0] magic, [63:32] start_deg float
- *   DW1: [31:0] stop_deg float, [63:32] magic
- * MAGIC bumped from the old single-angle format so a stale flash page from the
- * previous firmware is rejected and we fall back to the defaults. */
-#define FLASH_USER_ADDR       0x0807F800UL
-#define FLASH_USER_BANK       FLASH_BANK_2
-#define FLASH_USER_PAGE       127u
-#define FLASH_USER_MAGIC      0xB7A4E002UL
-#define START_ANGLE_DEFAULT   180.0f
-#define STOP_ANGLE_DEFAULT    110.0f
+ * FLASH_WRITE_QUIET_MS. The boot defaults (used until a /servo_command is saved)
+ * are app-level tuning knobs and are passed into FlashStore_LoadAngles(). */
+#define START_ANGLE_DEFAULT   180.0f  /* brake OFF/released */
+#define STOP_ANGLE_DEFAULT    110.0f  /* brake ON/engaged  */
 #define FLASH_WRITE_QUIET_MS  800u
 
 /* On a verified flash write, blink LED2 rapidly for a moment as a visual ACK.
@@ -177,8 +173,8 @@ void SystemClock_Config(void);
 static void  CAN_App_Init(void);          // FDCAN filter + start + RX notification
 static void  BrakeStatus_Send(void);      // pack and transmit the /brake_status heartbeat frame
 static void  ServoStatus_Send(void);      // transmit the held start/stop angles (0x133)
-static void    Flash_LoadAngles(float *start_out, float *stop_out); // recall persisted start/stop on boot (defaults if unset)
-static uint8_t Flash_SaveAngles(float start_deg, float stop_deg);   // persist start/stop; returns 1 if readback verifies
+/* Persisted start/stop servo angles now live in flash_store.[ch]:
+ *   FlashStore_LoadAngles() / FlashStore_SaveAngles() */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -187,74 +183,6 @@ static uint32_t deg_to_pulse(float deg) {
     if (deg < 0.0f)   deg = 0.0f;
     if (deg > 180.0f) deg = 180.0f;
     return (uint32_t)(1000.0f + deg * (1000.0f / 180.0f));
-}
-
-/* Pack a float + the magic into one 64-bit record. The float occupies the upper
- * 32 bits and the magic the lower 32 (DW0); the stop record stores them swapped
- * (DW1) so both records carry a magic to validate against. */
-static uint64_t flash_pack_dw0(float f) {   /* [31:0]=magic, [63:32]=float */
-    uint32_t bits;
-    memcpy(&bits, &f, sizeof(float));
-    return ((uint64_t) bits << 32) | (uint64_t) FLASH_USER_MAGIC;
-}
-static uint64_t flash_pack_dw1(float f) {   /* [31:0]=float, [63:32]=magic */
-    uint32_t bits;
-    memcpy(&bits, &f, sizeof(float));
-    return ((uint64_t) FLASH_USER_MAGIC << 32) | (uint64_t) bits;
-}
-
-/* Read the persisted start/stop angles. Falls back to the defaults if the page
- * was never written (magic mismatch in either record) or holds out-of-range
- * values. */
-static void Flash_LoadAngles(float *start_out, float *stop_out) {
-    *start_out = START_ANGLE_DEFAULT;
-    *stop_out  = STOP_ANGLE_DEFAULT;
-
-    uint64_t dw0 = *(__IO uint64_t *) FLASH_USER_ADDR;
-    uint64_t dw1 = *(__IO uint64_t *) (FLASH_USER_ADDR + 8u);
-    if ((uint32_t) (dw0 & 0xFFFFFFFFUL) != FLASH_USER_MAGIC ||
-        (uint32_t) (dw1 >> 32)          != FLASH_USER_MAGIC) {
-        return;  /* never written / wrong format -> keep defaults */
-    }
-
-    uint32_t sbits = (uint32_t) (dw0 >> 32);
-    uint32_t tbits = (uint32_t) (dw1 & 0xFFFFFFFFUL);
-    float s, t;
-    memcpy(&s, &sbits, sizeof(float));
-    memcpy(&t, &tbits, sizeof(float));
-    if (s >= 0.0f && s <= 180.0f) *start_out = s;
-    if (t >= 0.0f && t <= 180.0f) *stop_out  = t;
-}
-
-/* Erase the user page and store the start/stop angles as two 64-bit records. The
- * ~22 ms page erase stalls the whole CPU (no RWW on the G474), so callers must
- * debounce this — see FLASH_WRITE_QUIET_MS. Reads both records back and returns 1
- * only if they match what we intended to write. */
-static uint8_t Flash_SaveAngles(float start_deg, float stop_deg) {
-    uint64_t dw0 = flash_pack_dw0(start_deg);
-    uint64_t dw1 = flash_pack_dw1(stop_deg);
-
-    FLASH_EraseInitTypeDef erase = {0};
-    uint32_t page_err = 0;
-    erase.TypeErase = FLASH_TYPEERASE_PAGES;
-    erase.Banks     = FLASH_USER_BANK;
-    erase.Page      = FLASH_USER_PAGE;
-    erase.NbPages   = 1;
-
-    HAL_StatusTypeDef st = HAL_ERROR;
-    HAL_FLASH_Unlock();
-    if (HAL_FLASHEx_Erase(&erase, &page_err) == HAL_OK) {
-        st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, FLASH_USER_ADDR, dw0);
-        if (st == HAL_OK) {
-            st = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, FLASH_USER_ADDR + 8u, dw1);
-        }
-    }
-    HAL_FLASH_Lock();
-
-    /* Verify: both programmed doublewords must read back exactly. */
-    return (st == HAL_OK &&
-            *(__IO uint64_t *) FLASH_USER_ADDR        == dw0 &&
-            *(__IO uint64_t *) (FLASH_USER_ADDR + 8u) == dw1) ? 1u : 0u;
 }
 /* USER CODE END 0 */
 
@@ -323,7 +251,8 @@ int main(void)
 	/* Recall the start/stop angles saved by the last /servo_command (defaults if
 	 * the flash page was never written). */
 	float loaded_start, loaded_stop;
-	Flash_LoadAngles(&loaded_start, &loaded_stop);
+	FlashStore_LoadAngles(&loaded_start, &loaded_stop,
+			START_ANGLE_DEFAULT, STOP_ANGLE_DEFAULT);
 	start_angle_deg = loaded_start;
 	stop_angle_deg  = loaded_stop;
 
@@ -446,7 +375,7 @@ int main(void)
 		 * back-to-back ~22 ms erase stalls (which would drop/delay CAN frames). */
 		if (flash_save_req && (HAL_GetTick() - flash_req_tick) >= FLASH_WRITE_QUIET_MS) {
 			flash_save_req = 0;
-			flash_write_ok = Flash_SaveAngles(start_angle_deg, stop_angle_deg);
+			flash_write_ok = FlashStore_SaveAngles(start_angle_deg, stop_angle_deg);
 			if (flash_write_ok) {
 				led2_blink_ticks = LED2_BLINK_TICKS;  // rapid-blink LED2 as a write ACK
 			}
