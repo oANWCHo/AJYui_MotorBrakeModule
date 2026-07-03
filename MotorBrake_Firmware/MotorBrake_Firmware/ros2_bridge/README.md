@@ -68,6 +68,27 @@ sudo ip link set up can0
 
 (`-s` codes: `s6`=500k, `s8`=1M. Match the firmware bitrate.)
 
+**WeActStudio USB2CAN** (slcan-based, enumerates as `/dev/ttyACM*`):
+
+```bash
+# 1. Find which /dev/ttyACM* node the adapter got (unplug/replug to confirm)
+ls /dev/ttyACM*
+
+# 2. Load the SocketCAN + slcan kernel modules
+sudo modprobe can
+sudo modprobe can_raw
+sudo modprobe slcan
+
+# 3. Attach the serial device as can0 (-s8 = 1 Mbps; replace ttyACM0 with your node)
+sudo slcand -o -c -f -s8 /dev/ttyACM0 can0
+
+# 4. Bring the interface up
+sudo ip link set can0 up
+```
+
+Then verify with `candump can0` (from `can-utils`). Same `-s` bitrate codes as above
+(`s6`=500k, `s8`=1M); the `-f` flag enables hardware flow control on the adapter.
+
 ## 3) Get ROS 2 — Option A (native) or Option B (Docker)
 
 If your machine already runs a ROS 2-supported Ubuntu (22.04 Humble / 24.04 Jazzy),
