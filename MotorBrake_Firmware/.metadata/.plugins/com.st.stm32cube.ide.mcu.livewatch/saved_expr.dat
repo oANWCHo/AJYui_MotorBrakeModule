@@ -1,1 +1,9 @@
-uwTick
+curtis_forward
+curtis_backward
+curtis_pedal
+output_test_enable
+CurtisIO_OutTest_forward
+CurtisIO_OutTest_backward
+CurtisIO_OutTest_pedal
+CurtisIO_OutTest_i2c_ok
+CurtisIO_OutTest_mcor_code

@@ -1,0 +1,15 @@
+../Core/Src/curtis_io.c:45:9:CurtisIO_Forward	2
+../Core/Src/curtis_io.c:50:9:CurtisIO_Backward	2
+../Core/Src/curtis_io.c:55:9:CurtisIO_Pedal	2
+../Core/Src/curtis_io.c:60:6:CurtisIO_ReadDigital	1
+../Core/Src/curtis_io.c:66:7:CurtisIO_McorVolts	1
+../Core/Src/curtis_io.c:70:6:CurtisIO_SpeedOnCapture	3
+../Core/Src/curtis_io.c:83:7:CurtisIO_SpeedHz	3
+../Core/Src/curtis_io.c:92:6:CurtisIO_OutputEnable	1
+../Core/Src/curtis_io.c:97:6:CurtisIO_SetForward	1
+../Core/Src/curtis_io.c:102:6:CurtisIO_SetBackward	1
+../Core/Src/curtis_io.c:107:6:CurtisIO_SetPedal	1
+../Core/Src/curtis_io.c:112:6:CurtisIO_WriteDigitalOut	1
+../Core/Src/curtis_io.c:118:9:CurtisIO_McorWriteRaw	3
+../Core/Src/curtis_io.c:132:9:CurtisIO_McorWriteVolts	3
+../Core/Src/curtis_io.c:154:6:CurtisIO_OutputTestRun	8

@@ -179,6 +179,13 @@ volatile uint8_t curtis_backward = 0;   // Backward_IN_to_MCU (PC4) raw level
 volatile uint8_t curtis_pedal    = 0;   // Pedal_IN_to_MCU    (PB0) raw level
 volatile float   mcor_volts      = 0.0f;// MCOR throttle wiper (PA1/IN2), volts
 volatile float   speed_sensor_hz = 0.0f;// Speed_Sensor_to_MCU (PA15/TIM2 CH1), pulse Hz
+
+/* --- Output self-test (bench). Flip to 1 in a Live Expression to energise the
+ * mode relay and start cycling the Forward/Backward/Pedal out lines + sweeping
+ * the MCOR DAC; back to 0 releases every output and hands the Curtis back to
+ * the input/pass-through side. Watch the CurtisIO_OutTest_* variables move. --- */
+volatile uint8_t output_test_enable = 0;
+#define OUTPUT_TEST_PERIOD_MS   100u   // ms between test steps (pattern advance)
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -419,6 +426,11 @@ int main(void)
 		curtis_pedal    = curtis_in.pedal;
 		mcor_volts      = CurtisIO_McorVolts(adc_buffer[MCOR_ADC_INDEX]);
 		speed_sensor_hz = CurtisIO_SpeedHz();
+
+		/* Output self-test: when output_test_enable is set (via Live Expression),
+		 * energise the mode relay and cycle every output so the CurtisIO_OutTest_*
+		 * values step continuously. Non-blocking; releases outputs when cleared. */
+		CurtisIO_OutputTestRun(output_test_enable, OUTPUT_TEST_PERIOD_MS);
 
 		/* Transmit the held servo angle (0x133) + /brake_status heartbeat on the
 		 * 20 ms tick. 0x133 goes FIRST so the bridge has the current angle in

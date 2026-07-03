@@ -111,6 +111,36 @@ uint8_t CurtisIO_McorWriteRaw(uint16_t code12);
   */
 uint8_t CurtisIO_McorWriteVolts(float volts);
 
+/* ============================ Output self-test ============================ *
+ * Bench test that exercises every output at once so you can watch them move in
+ * a Live Expression (and on a scope/meter): it energises the mode relay, walks
+ * the Forward/Backward/Pedal output lines through a rotating pattern, and sweeps
+ * the MCOR DAC up and down as a triangle. Non-blocking — paces itself off
+ * HAL_GetTick — so call it every main-loop pass.
+ *
+ * Drive it from a single enable flag you flip in a Live Expression:
+ *   - enable 0 -> 1 (rising edge)  : mode relay ON, start driving/sweeping
+ *   - enable 1 -> 0 (falling edge) : zero every output, DAC = 0, mode relay OFF
+ *     (control handed back to the pass-through / input side).
+ * Watch the CurtisIO_OutTest_* variables below to see the values step.
+ * ------------------------------------------------------------------------- */
+
+/**
+  * @brief  One step of the output self-test. Call every main-loop pass.
+  * @param  enable    : 1 = run the test, 0 = idle (releases outputs on the edge).
+  * @param  period_ms : ms between advancing the pattern (0 -> 100 ms default).
+  */
+void CurtisIO_OutputTestRun(uint8_t enable, uint32_t period_ms);
+
+/* Live-Expression telemetry, refreshed each test step. */
+extern volatile uint8_t  CurtisIO_OutTest_forward;    /* last Forward  out level */
+extern volatile uint8_t  CurtisIO_OutTest_backward;   /* last Backward out level */
+extern volatile uint8_t  CurtisIO_OutTest_pedal;      /* last Pedal    out level */
+extern volatile uint8_t  CurtisIO_OutTest_phase;      /* digital walk phase 0..3 */
+extern volatile uint16_t CurtisIO_OutTest_mcor_code;  /* last DAC code, 0..4095  */
+extern volatile float    CurtisIO_OutTest_mcor_volts; /* that code as volts      */
+extern volatile uint8_t  CurtisIO_OutTest_i2c_ok;     /* 1 = last DAC write ACKed */
+
 #ifdef __cplusplus
 }
 #endif

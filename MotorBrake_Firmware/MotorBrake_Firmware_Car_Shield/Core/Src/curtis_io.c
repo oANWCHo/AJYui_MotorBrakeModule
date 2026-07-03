@@ -135,3 +135,94 @@ uint8_t CurtisIO_McorWriteVolts(float volts) {
     uint16_t code = (uint16_t) ((volts / MCP4725_VREF) * (float) MCP4725_MAX_CODE + 0.5f);
     return CurtisIO_McorWriteRaw(code);
 }
+
+/* ---------------------------- Output self-test ---------------------------- */
+/* MCOR triangle sweep: code moves by this much each step; a full 0..4095 ramp
+ * therefore takes ~4095/64 ≈ 64 steps (~6.4 s at the default 100 ms period),
+ * slow enough to watch the wiper voltage climb and fall. */
+#define OUTTEST_MCOR_STEP   64
+
+/* Live-Expression telemetry (see curtis_io.h for meanings). */
+volatile uint8_t  CurtisIO_OutTest_forward    = 0;
+volatile uint8_t  CurtisIO_OutTest_backward   = 0;
+volatile uint8_t  CurtisIO_OutTest_pedal      = 0;
+volatile uint8_t  CurtisIO_OutTest_phase      = 0;
+volatile uint16_t CurtisIO_OutTest_mcor_code  = 0;
+volatile float    CurtisIO_OutTest_mcor_volts = 0.0f;
+volatile uint8_t  CurtisIO_OutTest_i2c_ok     = 0;
+
+void CurtisIO_OutputTestRun(uint8_t enable, uint32_t period_ms) {
+    static uint8_t  running   = 0;   /* de-glitched run state (edge detect) */
+    static uint32_t last_tick = 0;   /* HAL tick of the last pattern advance */
+    static uint16_t code      = 0;   /* current MCOR DAC code */
+    static int16_t  step      = OUTTEST_MCOR_STEP;  /* sweep direction/size */
+    static uint8_t  phase     = 0;   /* digital walk phase 0..3 */
+
+    uint32_t now = HAL_GetTick();
+
+    if (!enable) {
+        /* Falling edge: park everything and hand control back to the input side.
+         * Idle after that (nothing to do until re-enabled). */
+        if (running) {
+            CurtisIO_WriteDigitalOut(0, 0, 0);
+            CurtisIO_McorWriteRaw(0);
+            CurtisIO_OutputEnable(0);
+            CurtisIO_OutTest_forward    = 0;
+            CurtisIO_OutTest_backward   = 0;
+            CurtisIO_OutTest_pedal      = 0;
+            CurtisIO_OutTest_phase      = 0;
+            CurtisIO_OutTest_mcor_code  = 0;
+            CurtisIO_OutTest_mcor_volts = 0.0f;
+            code    = 0;
+            step    = OUTTEST_MCOR_STEP;
+            phase   = 0;
+            running = 0;
+        }
+        return;
+    }
+
+    if (!running) {
+        /* Rising edge: route the MCU outputs to the Curtis (mode relay ON) and
+         * let the relay settle one period before we start driving. */
+        CurtisIO_OutputEnable(1);
+        running   = 1;
+        last_tick = now;
+        return;
+    }
+
+    if (period_ms == 0u) {
+        period_ms = 100u;
+    }
+    if ((now - last_tick) < period_ms) {
+        return;   /* not time for the next step yet */
+    }
+    last_tick = now;
+
+    /* Digital outputs: light one line at a time (F -> B -> Pedal -> all off),
+     * so each output visibly toggles in turn. */
+    uint8_t f = (uint8_t) (phase == 0u);
+    uint8_t b = (uint8_t) (phase == 1u);
+    uint8_t p = (uint8_t) (phase == 2u);
+    CurtisIO_WriteDigitalOut(f, b, p);
+    CurtisIO_OutTest_forward  = f;
+    CurtisIO_OutTest_backward = b;
+    CurtisIO_OutTest_pedal    = p;
+    CurtisIO_OutTest_phase    = phase;
+    phase = (uint8_t) ((phase + 1u) & 0x03u);   /* 0,1,2,3(all off), wrap */
+
+    /* MCOR DAC: triangle sweep 0 -> MAX -> 0 so the wiper voltage ramps up and
+     * down continuously. Bounce the direction at each end. */
+    int32_t next = (int32_t) code + step;
+    if (next >= (int32_t) MCP4725_MAX_CODE) {
+        next = (int32_t) MCP4725_MAX_CODE;
+        step = (int16_t) -step;
+    } else if (next <= 0) {
+        next = 0;
+        step = (int16_t) -step;
+    }
+    code = (uint16_t) next;
+
+    CurtisIO_OutTest_i2c_ok     = CurtisIO_McorWriteRaw(code);
+    CurtisIO_OutTest_mcor_code  = code;
+    CurtisIO_OutTest_mcor_volts = ((float) code / (float) MCP4725_MAX_CODE) * MCP4725_VREF;
+}
