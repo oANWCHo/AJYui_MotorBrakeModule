@@ -13,3 +13,4 @@
 ../Core/Src/curtis_io.c:118:9:CurtisIO_McorWriteRaw	32	static
 ../Core/Src/curtis_io.c:132:9:CurtisIO_McorWriteVolts	24	static
 ../Core/Src/curtis_io.c:154:6:CurtisIO_OutputTestRun	32	static
+../Core/Src/curtis_io.c:240:6:CurtisIO_OutputOverrideRun	24	static

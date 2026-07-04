@@ -60,7 +60,14 @@
  *            0x131. The held start/stop angles (flash-recalled at boot, then the
  *            live values after each overwrite), same layout as /servo_command:
  *     [0..3] float32 start_deg (little-endian)
- *     [4..7] float32 stop_deg  (little-endian) */
+ *     [4..7] float32 stop_deg  (little-endian)
+ * /speed_status  : STM32 -> PC, ID 0x120, 8-byte, sent on the same 20 ms tick as
+ *            0x131. Motor speed-sensor reading laid out as a Twist so the bridge
+ *            can republish it as cmd_vel.linear.x:
+ *     [0..3] float32 linear_x  : speed-sensor pulse rate (Hz). Apply the wheel
+ *            circumference / pulses-per-rev scale on the PC to get m/s.
+ *     [4..7] float32 angular_z : reserved, 0.0 */
+#define CAN_ID_SPEED_STATUS   0x120u
 #define CAN_ID_BRAKE_CMD      0x130u
 #define CAN_ID_BRAKE_STATUS   0x131u
 #define CAN_ID_SERVO_CMD      0x132u
@@ -154,7 +161,7 @@ volatile uint8_t  flash_save_req = 0;  // set by RX ISR when start/stop angle ch
 volatile uint32_t flash_req_tick = 0;  // HAL tick of the last start/stop angle change (debounce reference)
 volatile uint8_t flash_write_ok = 0;  // 1 = last flash write read back OK (visible in Live Expression)
 volatile uint16_t led2_blink_ticks = 0; // >0 = LED2 rapid-blink countdown (10 ms ticks), set on a verified write
-uint16_t adc_buffer[4];     // สร้าง Buffer รอรับค่าจาก ADC DMA
+volatile uint16_t adc_buffer[4];     // สร้าง Buffer รอรับค่าจาก ADC DMA
 uint16_t led_counter = 0;
 
 /* Relay/servo release sequencer state (driven in the main loop). */
@@ -172,6 +179,7 @@ uint16_t          heartbeat_seq = 0;     // rolling counter so the PC can detect
 
 FDCAN_TxHeaderTypeDef CanTxHeader;        // configured once in CAN_App_Init() — used for 0x131
 FDCAN_TxHeaderTypeDef CanServoTxHeader;   // configured once in CAN_App_Init() — used for 0x133
+FDCAN_TxHeaderTypeDef CanSpeedTxHeader;   // configured once in CAN_App_Init() — used for 0x120
 
 /* --- Curtis 1510 input readings, refreshed each main-loop pass (Live Expression) --- */
 volatile uint8_t curtis_forward  = 0;   // Forward_IN_to_MCU  (PC5) raw level
@@ -186,6 +194,13 @@ volatile float   speed_sensor_hz = 0.0f;// Speed_Sensor_to_MCU (PA15/TIM2 CH1), 
  * the input/pass-through side. Watch the CurtisIO_OutTest_* variables move. --- */
 volatile uint8_t output_test_enable = 0;
 #define OUTPUT_TEST_PERIOD_MS   100u   // ms between test steps (pattern advance)
+
+/* --- Manual output override (bench). Set CurtisIO_Override_forward/backward/
+ * pedal (0/1) and CurtisIO_Override_mcor_volts (0..VREF) in a Live Expression,
+ * then flip this to 1 to drive the Curtis outputs to exactly those values. Takes
+ * precedence over the auto self-test above (only one drives the outputs). Back to
+ * 0 releases every output and hands the Curtis back to the input side. --- */
+volatile uint8_t output_override_enable = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -194,6 +209,7 @@ void SystemClock_Config(void);
 static void  CAN_App_Init(void);          // FDCAN filter + start + RX notification
 static void  BrakeStatus_Send(void);      // pack and transmit the /brake_status heartbeat frame
 static void  ServoStatus_Send(void);      // transmit the held start/stop angles (0x133)
+static void  SpeedStatus_Send(void);      // transmit the speed-sensor reading (0x120)
 /* Persisted start/stop servo angles now live in flash_store.[ch]:
  *   FlashStore_LoadAngles() / FlashStore_SaveAngles() */
 /* USER CODE END PFP */
@@ -427,10 +443,14 @@ int main(void)
 		mcor_volts      = CurtisIO_McorVolts(adc_buffer[MCOR_ADC_INDEX]);
 		speed_sensor_hz = CurtisIO_SpeedHz();
 
-		/* Output self-test: when output_test_enable is set (via Live Expression),
-		 * energise the mode relay and cycle every output so the CurtisIO_OutTest_*
-		 * values step continuously. Non-blocking; releases outputs when cleared. */
-		CurtisIO_OutputTestRun(output_test_enable, OUTPUT_TEST_PERIOD_MS);
+		/* Curtis output drivers (Live Expression, bench). Two mutually exclusive
+		 * modes share the mode relay + output lines, so only one may drive at a
+		 * time — the manual override wins when its flag is set:
+		 *   - output_override_enable : drive outputs to the CurtisIO_Override_* values
+		 *   - output_test_enable     : rotating auto self-test pattern / MCOR sweep
+		 * Both are non-blocking and release their outputs on the falling edge. */
+//		CurtisIO_OutputTestRun(output_test_enable && !output_override_enable,OUTPUT_TEST_PERIOD_MS);
+		CurtisIO_OutputOverrideRun(output_override_enable);
 
 		/* Transmit the held servo angle (0x133) + /brake_status heartbeat on the
 		 * 20 ms tick. 0x133 goes FIRST so the bridge has the current angle in
@@ -440,6 +460,7 @@ int main(void)
 			can_tx_flag = 0;
 			ServoStatus_Send();
 			BrakeStatus_Send();
+			SpeedStatus_Send();
 		}
 	}
   /* USER CODE END 3 */
@@ -555,6 +576,11 @@ static void CAN_App_Init(void)
 	CanServoTxHeader.Identifier = CAN_ID_SERVO_STATUS;
 	CanServoTxHeader.DataLength = FDCAN_DLC_BYTES_8;
 
+	/* Speed-status frame (0x120): 8-byte, two float32 (linear_x, angular_z). */
+	CanSpeedTxHeader = CanTxHeader;
+	CanSpeedTxHeader.Identifier = CAN_ID_SPEED_STATUS;
+	CanSpeedTxHeader.DataLength = FDCAN_DLC_BYTES_8;
+
 	if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
 		Error_Handler();
 	}
@@ -606,6 +632,21 @@ static void ServoStatus_Send(void)
 	memcpy(&TxData[4], &t, sizeof(float)); /* [4..7] float32 stop_deg,  little-endian */
 
 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanServoTxHeader, TxData);
+}
+
+/**
+  * @brief Report the motor speed sensor (0x120) as a Twist: linear.x carries the
+  *        speed-sensor pulse rate (Hz); the PC bridge scales it to cmd_vel.linear.x.
+  */
+static void SpeedStatus_Send(void)
+{
+	float linear_x  = speed_sensor_hz;   /* volatile -> local snapshot */
+	float angular_z = 0.0f;              /* reserved */
+	uint8_t TxData[8];
+	memcpy(&TxData[0], &linear_x,  sizeof(float)); /* [0..3] float32 linear_x,  little-endian */
+	memcpy(&TxData[4], &angular_z, sizeof(float)); /* [4..7] float32 angular_z, little-endian */
+
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanSpeedTxHeader, TxData);
 }
 
 /**

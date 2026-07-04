@@ -141,6 +141,31 @@ extern volatile uint16_t CurtisIO_OutTest_mcor_code;  /* last DAC code, 0..4095 
 extern volatile float    CurtisIO_OutTest_mcor_volts; /* that code as volts      */
 extern volatile uint8_t  CurtisIO_OutTest_i2c_ok;     /* 1 = last DAC write ACKed */
 
+/* ========================= Manual output override ========================= *
+ * Like the self-test above, but you set each output value yourself in a Live
+ * Expression instead of watching an automatic pattern. Set the CurtisIO_Override_*
+ * values below, then flip the enable flag (output_override_enable in main.c) to 1:
+ *   - enable 0 -> 1 : mode relay ON, outputs driven to the override values
+ *   - enable 1 -> 0 : zero every output, DAC = 0, mode relay OFF (input side)
+ * While enabled the values are applied live, so you can change Forward/Backward/
+ * Pedal/MCOR on the fly. Non-blocking — call it every main-loop pass. Do not run
+ * this and CurtisIO_OutputTestRun() at the same time (they share the outputs).
+ * ------------------------------------------------------------------------- */
+
+/**
+  * @brief  Apply the manual output override. Call every main-loop pass.
+  * @param  enable : 1 = drive the outputs to the CurtisIO_Override_* values,
+  *                  0 = idle (releases outputs on the falling edge).
+  */
+void CurtisIO_OutputOverrideRun(uint8_t enable);
+
+/* Override values — edit these in a Live Expression while enabled. */
+extern volatile uint8_t CurtisIO_Override_forward;    /* Forward  out line, 0/1  */
+extern volatile uint8_t CurtisIO_Override_backward;   /* Backward out line, 0/1  */
+extern volatile uint8_t CurtisIO_Override_pedal;      /* Pedal    out line, 0/1  */
+extern volatile float   CurtisIO_Override_mcor_volts; /* MCOR DAC target, 0..VREF */
+extern volatile uint8_t CurtisIO_Override_i2c_ok;     /* 1 = last DAC write ACKed */
+
 #ifdef __cplusplus
 }
 #endif

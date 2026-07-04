@@ -13,7 +13,7 @@
 #include "i2c.h"      /* hi2c2 for the MCP4725 MCOR DAC */
 
 /* Private define ------------------------------------------------------------*/
-#define ADC_VREF              5.0f
+#define ADC_VREF              3.3f
 #define ADC_FULL_SCALE        4095.0f
 
 /* MCP4725 MCOR DAC on I2C2 (PA8=SDA, PA9=SCL). Default 7-bit address 0x60
@@ -225,58 +225,4 @@ void CurtisIO_OutputTestRun(uint8_t enable, uint32_t period_ms) {
     CurtisIO_OutTest_i2c_ok     = CurtisIO_McorWriteRaw(code);
     CurtisIO_OutTest_mcor_code  = code;
     CurtisIO_OutTest_mcor_volts = ((float) code / (float) MCP4725_MAX_CODE) * MCP4725_VREF;
-}
-
-/* -------------------------- Manual output override ------------------------ */
-/* Live-Expression override values: edit these, then set CurtisIO_Override_enable
- * (in main.c) to drive the Curtis outputs to exactly these values instead of the
- * rotating self-test pattern above. */
-volatile uint8_t CurtisIO_Override_forward    = 0;   /* Forward  out line, 0/1 */
-volatile uint8_t CurtisIO_Override_backward   = 0;   /* Backward out line, 0/1 */
-volatile uint8_t CurtisIO_Override_pedal      = 0;   /* Pedal    out line, 0/1 */
-volatile float   CurtisIO_Override_mcor_volts = 0.0f;/* MCOR DAC target, 0..VREF */
-volatile uint8_t CurtisIO_Override_i2c_ok     = 0;   /* 1 = last DAC write ACKed */
-
-void CurtisIO_OutputOverrideRun(uint8_t enable) {
-    static uint8_t running    = 0;      /* de-glitched run state (edge detect) */
-    static float   last_volts = -1.0f;  /* last value actually written to the DAC */
-
-    if (!enable) {
-        /* Falling edge: park every output and hand control back to the input
-         * side. Idle after that until re-enabled. */
-        if (running) {
-            CurtisIO_WriteDigitalOut(0, 0, 0);
-            CurtisIO_McorWriteRaw(0);
-            CurtisIO_OutputEnable(0);
-            CurtisIO_Override_i2c_ok = 0;
-            last_volts = -1.0f;
-            running    = 0;
-        }
-        return;
-    }
-
-    if (!running) {
-        /* Rising edge: route the MCU outputs to the Curtis (mode relay ON) and
-         * let the relay settle one pass before driving. */
-        CurtisIO_OutputEnable(1);
-        running    = 1;
-        last_volts = -1.0f;   /* force the DAC to be (re)written on the next pass */
-        return;
-    }
-
-    /* Digital lines: cheap and idempotent, so apply live every pass. */
-    CurtisIO_WriteDigitalOut(CurtisIO_Override_forward,
-                             CurtisIO_Override_backward,
-                             CurtisIO_Override_pedal);
-
-    /* MCOR DAC: only hit I2C when the requested voltage changed, so a fast main
-     * loop does not saturate I2C2 with identical writes. On a NAK, leave
-     * last_volts stale so the write is retried next pass. */
-    float v = CurtisIO_Override_mcor_volts;
-    if (v != last_volts) {
-        CurtisIO_Override_i2c_ok = CurtisIO_McorWriteVolts(v);
-        if (CurtisIO_Override_i2c_ok) {
-            last_volts = v;
-        }
-    }
 }
