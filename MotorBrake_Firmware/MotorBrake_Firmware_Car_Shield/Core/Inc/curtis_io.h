@@ -72,6 +72,14 @@ void CurtisIO_SpeedOnCapture(uint32_t capture);
   */
 float CurtisIO_SpeedHz(void);
 
+/**
+  * @brief  Latest wheel speed converted to linear velocity.
+  * @retval Speed magnitude in m/s (always >= 0 — the pulse sensor cannot tell
+  *         direction). Uses 50 pulses/rev and a 1.57 m wheel circumference:
+  *             m/s = (Hz / 50) * 1.57
+  */
+float CurtisIO_SpeedMps(void);
+
 /* ============================= Output side ================================ *
  * Drive the Curtis 1510 instead of sensing it. The mode relay (Relay_Mode /
  * PA10) selects which side is wired through, so it MUST be energised before the
@@ -140,6 +148,75 @@ extern volatile uint8_t  CurtisIO_OutTest_phase;      /* digital walk phase 0..3
 extern volatile uint16_t CurtisIO_OutTest_mcor_code;  /* last DAC code, 0..4095  */
 extern volatile float    CurtisIO_OutTest_mcor_volts; /* that code as volts      */
 extern volatile uint8_t  CurtisIO_OutTest_i2c_ok;     /* 1 = last DAC write ACKed */
+
+/* ========================= Manual output override ========================= *
+ * Like the self-test above, but you set each output value yourself in a Live
+ * Expression instead of watching an automatic pattern. Set the CurtisIO_Override_*
+ * values below, then flip the enable flag (output_override_enable in main.c) to 1:
+ *   - enable 0 -> 1 : mode relay ON, outputs driven to the override values
+ *   - enable 1 -> 0 : zero every output, DAC = 0, mode relay OFF (input side)
+ * While enabled the values are applied live, so you can change Forward/Backward/
+ * Pedal/MCOR on the fly. Non-blocking — call it every main-loop pass. Do not run
+ * this and CurtisIO_OutputTestRun() at the same time (they share the outputs).
+ * ------------------------------------------------------------------------- */
+
+/**
+  * @brief  Apply the manual output override. Call every main-loop pass.
+  * @param  enable : 1 = drive the outputs to the CurtisIO_Override_* values,
+  *                  0 = idle (releases outputs on the falling edge).
+  */
+void CurtisIO_OutputOverrideRun(uint8_t enable);
+
+/* Override values — edit these in a Live Expression while enabled. */
+extern volatile uint8_t CurtisIO_Override_forward;    /* Forward  out line, 0/1  */
+extern volatile uint8_t CurtisIO_Override_backward;   /* Backward out line, 0/1  */
+extern volatile uint8_t CurtisIO_Override_pedal;      /* Pedal    out line, 0/1  */
+extern volatile float   CurtisIO_Override_mcor_volts; /* MCOR DAC target, 0..VREF */
+extern volatile uint8_t CurtisIO_Override_i2c_ok;     /* 1 = last DAC write ACKed */
+
+/* ========================= Closed-loop speed control ===================== *
+ * Drive the wheel to a target linear speed (m/s) with a PID loop. The loop
+ * reads the speed sensor (CurtisIO_SpeedMps), compares it to the target, and
+ * commands the MCOR throttle DAC to close the error; the sign of the target
+ * picks the direction lines:
+ *   target > 0  -> forward=1, backward=0, pedal=1, MCOR = PID output
+ *   target < 0  -> forward=0, backward=1, pedal=1, MCOR = PID output
+ *   target = 0  -> forward=0, backward=0, pedal=0, MCOR = 0  (full stop)
+ * The pulse sensor only reports speed *magnitude*, so the loop regulates
+ * |target| against the measured magnitude and trusts the direction lines to
+ * make the wheel actually turn the commanded way.
+ *
+ * Like the override/self-test, it owns the mode relay: on the rising edge of
+ * `enable` it energises Relay_Mode (OutputEnable(1)) and lets it settle before
+ * driving; on the falling edge it zeroes every output, DAC=0, and releases the
+ * relay back to the input side. Non-blocking — call it every main-loop pass; it
+ * paces the PID update off HAL_GetTick. Do not run this together with
+ * CurtisIO_OutputOverrideRun()/CurtisIO_OutputTestRun() (they share the outputs).
+ * ------------------------------------------------------------------------- */
+
+/**
+  * @brief  One step of the closed-loop speed controller. Call every loop pass.
+  * @param  enable     : 1 = run the PID loop, 0 = idle (releases outputs on the
+  *                      falling edge, mode relay OFF).
+  * @param  target_mps : desired wheel speed, m/s. Sign selects direction; 0
+  *                      commands a full stop (all lines low, DAC 0).
+  */
+void CurtisIO_SpeedControlRun(uint8_t enable, float target_mps);
+
+/* PID gains — tune live in a Live Expression. Error is in m/s, output in volts. */
+extern volatile float CurtisIO_Speed_Kp;
+extern volatile float CurtisIO_Speed_Ki;
+extern volatile float CurtisIO_Speed_Kd;
+
+/* Live-Expression telemetry, refreshed each control step. */
+extern volatile float   CurtisIO_Speed_target_mps;   /* last commanded target   */
+extern volatile float   CurtisIO_Speed_measured_mps; /* measured speed magnitude */
+extern volatile float   CurtisIO_Speed_error;        /* |target| - measured     */
+extern volatile float   CurtisIO_Speed_mcor_volts;   /* PID -> MCOR DAC, volts  */
+extern volatile uint8_t CurtisIO_Speed_forward;      /* Forward  out line, 0/1  */
+extern volatile uint8_t CurtisIO_Speed_backward;     /* Backward out line, 0/1  */
+extern volatile uint8_t CurtisIO_Speed_pedal;        /* Pedal    out line, 0/1  */
+extern volatile uint8_t CurtisIO_Speed_i2c_ok;       /* 1 = last DAC write ACKed */
 
 #ifdef __cplusplus
 }

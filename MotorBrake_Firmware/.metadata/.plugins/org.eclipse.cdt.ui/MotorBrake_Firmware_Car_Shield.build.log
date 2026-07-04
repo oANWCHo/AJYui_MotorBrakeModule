@@ -1,10 +1,17 @@
-22:25:16 **** Incremental Build of configuration Debug for project MotorBrake_Firmware_Car_Shield ****
+15:59:37 **** Incremental Build of configuration Debug for project MotorBrake_Firmware_Car_Shield ****
 make -j20 all 
+arm-none-eabi-gcc "../Core/Src/curtis_io.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32G474xx -c -I../Core/Inc -I../Drivers/STM32G4xx_HAL_Driver/Inc -I../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32G4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/curtis_io.d" -MT"Core/Src/curtis_io.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/curtis_io.o"
+arm-none-eabi-gcc -o "MotorBrake_Firmware_Car_Shield.elf" @"objects.list"   -mcpu=cortex-m4 -T"D:\Nano\AJYui_MotorBrakeModule\MotorBrake_Firmware\MotorBrake_Firmware_Car_Shield\STM32G474RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MotorBrake_Firmware_Car_Shield.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: MotorBrake_Firmware_Car_Shield.elf
+ 
 arm-none-eabi-size  MotorBrake_Firmware_Car_Shield.elf 
+arm-none-eabi-objdump -h -S MotorBrake_Firmware_Car_Shield.elf  > "MotorBrake_Firmware_Car_Shield.list"
    text	   data	    bss	    dec	    hex	filename
-  36736	     60	   2404	  39200	   9920	MotorBrake_Firmware_Car_Shield.elf
+  37524	     68	   2476	  40068	   9c84	MotorBrake_Firmware_Car_Shield.elf
 Finished building: default.size.stdout
  
+Finished building: MotorBrake_Firmware_Car_Shield.list
+ 
 
-22:25:16 Build Finished. 0 errors, 0 warnings. (took 184ms)
+15:59:38 Build Finished. 0 errors, 0 warnings. (took 759ms)
 

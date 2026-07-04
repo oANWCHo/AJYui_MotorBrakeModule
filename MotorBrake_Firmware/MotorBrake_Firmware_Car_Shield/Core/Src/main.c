@@ -60,11 +60,30 @@
  *            0x131. The held start/stop angles (flash-recalled at boot, then the
  *            live values after each overwrite), same layout as /servo_command:
  *     [0..3] float32 start_deg (little-endian)
- *     [4..7] float32 stop_deg  (little-endian) */
+ *     [4..7] float32 stop_deg  (little-endian)
+ * ---- Closed-loop speed control (Curtis 1510), scaled int16 in m/s ----------
+ * The speed value on the wire is a signed little-endian int16 in units of
+ * 0.01 m/s (SPEED_CMD_SCALE): raw = round(m/s * 100), range ±327.67 m/s. The
+ * sign carries direction (>0 forward, <0 backward, 0 = stop).
+ * /cmd_vel (geometry_msgs/Twist.linear.x) : PC -> STM32, ID 0x120, 2-byte:
+ *     [0..1] int16 linear_x : target wheel speed, 0.01 m/s/LSB (little-endian).
+ * /speed_enable (std_msgs/Bool)           : PC -> STM32, ID 0x121, data[0] =
+ *            1 -> run the PID speed loop (mode relay ON), 0 -> release outputs.
+ * /speed_status (Twist.linear.x)          : STM32 -> PC, ID 0x122, 2-byte, sent
+ *            on the same 20 ms tick as 0x131. Measured wheel speed, same scaled
+ *            int16 encoding as /cmd_vel; sign follows the commanded direction
+ *            (the pulse sensor itself is unsigned):
+ *     [0..1] int16 linear_x : current wheel speed, 0.01 m/s/LSB (little-endian). */
+#define CAN_ID_CMD_VEL        0x120u   /* RX: target speed (int16, 0.01 m/s/LSB) */
+#define CAN_ID_SPEED_ENABLE   0x121u   /* RX: enable PID speed control (bool)    */
+#define CAN_ID_SPEED_STATUS   0x122u   /* TX: measured speed (int16, 0.01 m/s/LSB) */
 #define CAN_ID_BRAKE_CMD      0x130u
 #define CAN_ID_BRAKE_STATUS   0x131u
 #define CAN_ID_SERVO_CMD      0x132u
 #define CAN_ID_SERVO_STATUS   0x133u
+
+/* Speed value wire scaling: signed int16, 0.01 m/s per LSB (round-trip m/s). */
+#define SPEED_CMD_SCALE       100.0f
 
 /* ---- INA240A2D current sensor (gain 50 V/V) with a 2 mOhm shunt ----------
  * Unidirectional wiring (REF tied to GND) so 0 A -> ~0 V and only the
@@ -154,7 +173,7 @@ volatile uint8_t  flash_save_req = 0;  // set by RX ISR when start/stop angle ch
 volatile uint32_t flash_req_tick = 0;  // HAL tick of the last start/stop angle change (debounce reference)
 volatile uint8_t flash_write_ok = 0;  // 1 = last flash write read back OK (visible in Live Expression)
 volatile uint16_t led2_blink_ticks = 0; // >0 = LED2 rapid-blink countdown (10 ms ticks), set on a verified write
-uint16_t adc_buffer[4];     // สร้าง Buffer รอรับค่าจาก ADC DMA
+volatile uint16_t adc_buffer[4];     // สร้าง Buffer รอรับค่าจาก ADC DMA
 uint16_t led_counter = 0;
 
 /* Relay/servo release sequencer state (driven in the main loop). */
@@ -172,6 +191,7 @@ uint16_t          heartbeat_seq = 0;     // rolling counter so the PC can detect
 
 FDCAN_TxHeaderTypeDef CanTxHeader;        // configured once in CAN_App_Init() — used for 0x131
 FDCAN_TxHeaderTypeDef CanServoTxHeader;   // configured once in CAN_App_Init() — used for 0x133
+FDCAN_TxHeaderTypeDef CanSpeedTxHeader;   // configured once in CAN_App_Init() — used for 0x120
 
 /* --- Curtis 1510 input readings, refreshed each main-loop pass (Live Expression) --- */
 volatile uint8_t curtis_forward  = 0;   // Forward_IN_to_MCU  (PC5) raw level
@@ -186,6 +206,24 @@ volatile float   speed_sensor_hz = 0.0f;// Speed_Sensor_to_MCU (PA15/TIM2 CH1), 
  * the input/pass-through side. Watch the CurtisIO_OutTest_* variables move. --- */
 volatile uint8_t output_test_enable = 0;
 #define OUTPUT_TEST_PERIOD_MS   100u   // ms between test steps (pattern advance)
+
+/* --- Manual output override (bench). Set CurtisIO_Override_forward/backward/
+ * pedal (0/1) and CurtisIO_Override_mcor_volts (0..VREF) in a Live Expression,
+ * then flip this to 1 to drive the Curtis outputs to exactly those values. Takes
+ * precedence over the auto self-test above (only one drives the outputs). Back to
+ * 0 releases every output and hands the Curtis back to the input side. --- */
+volatile uint8_t output_override_enable = 0;
+
+/* --- Closed-loop speed control (bench/ROS). Set curtis_speed_target_mps to the
+ * desired wheel speed in m/s (sign = direction, 0 = stop), then flip
+ * speed_control_enable to 1: the PID loop energises the mode relay and drives
+ * the Curtis Forward/Backward/Pedal lines + MCOR throttle to hold that speed.
+ * Takes precedence over the manual override and auto self-test (only one drives
+ * the shared outputs). Back to 0 releases every output (mode relay OFF). Tune
+ * with CurtisIO_Speed_Kp/Ki/Kd; watch CurtisIO_Speed_* for telemetry. --- */
+volatile uint8_t speed_control_enable    = 0;
+volatile float   curtis_speed_target_mps = 0.0f;   // desired wheel speed, m/s (signed)
+volatile float   speed_sensor_mps        = 0.0f;   // measured speed magnitude, m/s (Live Expression)
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -194,6 +232,7 @@ void SystemClock_Config(void);
 static void  CAN_App_Init(void);          // FDCAN filter + start + RX notification
 static void  BrakeStatus_Send(void);      // pack and transmit the /brake_status heartbeat frame
 static void  ServoStatus_Send(void);      // transmit the held start/stop angles (0x133)
+static void  SpeedStatus_Send(void);      // transmit the speed-sensor reading (0x120)
 /* Persisted start/stop servo angles now live in flash_store.[ch]:
  *   FlashStore_LoadAngles() / FlashStore_SaveAngles() */
 /* USER CODE END PFP */
@@ -204,6 +243,21 @@ static uint32_t deg_to_pulse(float deg) {
     if (deg < 0.0f)   deg = 0.0f;
     if (deg > 180.0f) deg = 180.0f;
     return (uint32_t)(1000.0f + deg * (1000.0f / 180.0f));
+}
+
+/* Wire encoding for the speed frames: m/s -> signed int16 in 0.01 m/s units,
+ * rounded and clamped to the int16 range so a huge value cannot wrap. */
+static int16_t mps_to_raw(float mps) {
+    float scaled = mps * SPEED_CMD_SCALE;
+    scaled += (scaled >= 0.0f) ? 0.5f : -0.5f;   /* round to nearest */
+    if (scaled >  32767.0f) scaled =  32767.0f;
+    if (scaled < -32768.0f) scaled = -32768.0f;
+    return (int16_t) scaled;
+}
+
+/* Inverse of mps_to_raw: signed int16 (0.01 m/s/LSB) -> m/s. */
+static float raw_to_mps(int16_t raw) {
+    return (float) raw / SPEED_CMD_SCALE;
 }
 /* USER CODE END 0 */
 
@@ -426,11 +480,21 @@ int main(void)
 		curtis_pedal    = curtis_in.pedal;
 		mcor_volts      = CurtisIO_McorVolts(adc_buffer[MCOR_ADC_INDEX]);
 		speed_sensor_hz = CurtisIO_SpeedHz();
+		speed_sensor_mps = CurtisIO_SpeedMps();
 
-		/* Output self-test: when output_test_enable is set (via Live Expression),
-		 * energise the mode relay and cycle every output so the CurtisIO_OutTest_*
-		 * values step continuously. Non-blocking; releases outputs when cleared. */
-		CurtisIO_OutputTestRun(output_test_enable, OUTPUT_TEST_PERIOD_MS);
+		/* Curtis output drivers (Live Expression, bench). Three mutually exclusive
+		 * modes share the mode relay + output lines, so only one may drive at a
+		 * time. Precedence: speed control > manual override > auto self-test.
+		 *   - speed_control_enable   : PID loop holds curtis_speed_target_mps (m/s)
+		 *   - output_override_enable : drive outputs to the CurtisIO_Override_* values
+		 *   - output_test_enable     : rotating auto self-test pattern / MCOR sweep
+		 * Each is non-blocking and releases its outputs on the falling edge; gate
+		 * the lower-priority ones off so a released mode does not fight the relay. */
+		uint8_t sc_on = speed_control_enable;
+		uint8_t ov_on = output_override_enable && !sc_on;
+		CurtisIO_SpeedControlRun(sc_on, curtis_speed_target_mps);
+		CurtisIO_OutputOverrideRun(ov_on);
+//		CurtisIO_OutputTestRun(output_test_enable && !ov_on && !sc_on, OUTPUT_TEST_PERIOD_MS);
 
 		/* Transmit the held servo angle (0x133) + /brake_status heartbeat on the
 		 * 20 ms tick. 0x133 goes FIRST so the bridge has the current angle in
@@ -440,6 +504,7 @@ int main(void)
 			can_tx_flag = 0;
 			ServoStatus_Send();
 			BrakeStatus_Send();
+			SpeedStatus_Send();
 		}
 	}
   /* USER CODE END 3 */
@@ -510,7 +575,8 @@ static void CAN_App_Init(void)
 	hfdcan1.Init.NominalSyncJumpWidth = 3;
 	hfdcan1.Init.NominalTimeSeg1 = 13;
 	hfdcan1.Init.NominalTimeSeg2 = 3;
-	hfdcan1.Init.StdFiltersNbr = 2;   /* slot 0: /brake_command, slot 1: /servo_command */
+	/* slot 0: /brake_command, 1: /servo_command, 2: /cmd_vel, 3: /speed_enable */
+	hfdcan1.Init.StdFiltersNbr = 4;
 	if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK) {
 		Error_Handler();
 	}
@@ -534,6 +600,20 @@ static void CAN_App_Init(void)
 	if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
 		Error_Handler();
 	}
+
+	/* Accept /cmd_vel (0x120): target wheel speed for the PID loop */
+	sFilterConfig.FilterIndex = 2;
+	sFilterConfig.FilterID1 = CAN_ID_CMD_VEL;
+	if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+		Error_Handler();
+	}
+
+	/* Accept /speed_enable (0x121): turn the PID speed loop on/off */
+	sFilterConfig.FilterIndex = 3;
+	sFilterConfig.FilterID1 = CAN_ID_SPEED_ENABLE;
+	if (HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilterConfig) != HAL_OK) {
+		Error_Handler();
+	}
 	if (HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT,
 			FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE) != HAL_OK) {
 		Error_Handler();
@@ -554,6 +634,11 @@ static void CAN_App_Init(void)
 	CanServoTxHeader = CanTxHeader;
 	CanServoTxHeader.Identifier = CAN_ID_SERVO_STATUS;
 	CanServoTxHeader.DataLength = FDCAN_DLC_BYTES_8;
+
+	/* Speed-status frame (0x122): 2-byte, int16 scaled m/s (linear_x). */
+	CanSpeedTxHeader = CanTxHeader;
+	CanSpeedTxHeader.Identifier = CAN_ID_SPEED_STATUS;
+	CanSpeedTxHeader.DataLength = FDCAN_DLC_BYTES_2;
 
 	if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
 		Error_Handler();
@@ -609,7 +694,27 @@ static void ServoStatus_Send(void)
 }
 
 /**
-  * @brief FDCAN RX FIFO0 callback: decode /brake_command and /servo_command frames.
+  * @brief Report the current wheel speed (0x122) as Twist.linear.x, encoded as a
+  *        signed int16 in 0.01 m/s units. The pulse sensor is unsigned, so the
+  *        sign is taken from the commanded direction (curtis_speed_target_mps).
+  */
+static void SpeedStatus_Send(void)
+{
+	float mag = speed_sensor_mps;   /* measured magnitude, m/s (>= 0) */
+	/* Re-apply the commanded sign so the PC sees a signed cmd_vel-style speed. */
+	float signed_mps = (curtis_speed_target_mps < 0.0f) ? -mag : mag;
+	int16_t raw = mps_to_raw(signed_mps);
+
+	uint8_t TxData[2];
+	TxData[0] = (uint8_t) (raw & 0xFFu);          /* [0..1] int16 linear_x, LE */
+	TxData[1] = (uint8_t) ((raw >> 8) & 0xFFu);
+
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanSpeedTxHeader, TxData);
+}
+
+/**
+  * @brief FDCAN RX FIFO0 callback: decode /brake_command, /cmd_vel,
+  *        /speed_enable and /servo_command frames.
   */
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
@@ -625,6 +730,14 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 		if (RxHeader.Identifier == CAN_ID_BRAKE_CMD) {
 			/* std_msgs/Bool: data:true -> Relay ON (engage), data:false -> Relay OFF. */
 			relay_cmd = (RxData[0] != 0u) ? 1u : 0u;
+		} else if (RxHeader.Identifier == CAN_ID_CMD_VEL) {
+			/* 2-byte signed int16, 0.01 m/s/LSB: PID target wheel speed (signed). */
+			int16_t raw = (int16_t) ((uint16_t) RxData[0]
+			                       | ((uint16_t) RxData[1] << 8));
+			curtis_speed_target_mps = raw_to_mps(raw);
+		} else if (RxHeader.Identifier == CAN_ID_SPEED_ENABLE) {
+			/* std_msgs/Bool: 1 -> run the PID speed loop, 0 -> release outputs. */
+			speed_control_enable = (RxData[0] != 0u) ? 1u : 0u;
 		} else if (RxHeader.Identifier == CAN_ID_SERVO_CMD) {
 			/* 8-byte: [0..3] start_deg, [4..7] stop_deg. Takes effect immediately;
 			 * the flash persist is debounced in the main loop (FLASH_WRITE_QUIET_MS). */
