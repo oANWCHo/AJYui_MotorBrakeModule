@@ -37,15 +37,15 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   CONTENTS, READONLY, DEBUGGING, OCTETS
  16 .debug_macro  0002ac2b  00000000  00000000  0002e059  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .debug_line   0001f513  00000000  00000000  00058c84  2**0
+ 17 .debug_line   0001e07f  00000000  00000000  00058c84  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 18 .debug_str    0011ab28  00000000  00000000  00078197  2**0
+ 18 .debug_str    0011ab3c  00000000  00000000  00076d03  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .comment      00000043  00000000  00000000  00192cbf  2**0
+ 19 .comment      00000043  00000000  00000000  0019183f  2**0
                   CONTENTS, READONLY
- 20 .debug_frame  00006758  00000000  00000000  00192d04  2**2
+ 20 .debug_frame  00006758  00000000  00000000  00191884  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 21 .debug_line_str 00000080  00000000  00000000  0019945c  2**0
+ 21 .debug_line_str 00000094  00000000  00000000  00197fdc  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -5004,7 +5004,7 @@ void MX_TIM2_Init(void)
  80021a8:	609a      	str	r2, [r3, #8]
   htim2.Init.Period = 4294967295;
  80021aa:	4b1c      	ldr	r3, [pc, #112]	@ (800221c <MX_TIM2_Init+0xa4>)
- 80021ac:	f04f 32ff 	mov.w	r2, #4294967295
+ 80021ac:	f04f 32ff 	mov.w	r2, #4294967295	@ 0xffffffff
  80021b0:	60da      	str	r2, [r3, #12]
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
  80021b2:	4b1a      	ldr	r3, [pc, #104]	@ (800221c <MX_TIM2_Init+0xa4>)
@@ -5601,7 +5601,7 @@ __weak HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
         HAL_NVIC_SetPriority(SysTick_IRQn, TickPriority, 0U);
  80024b2:	2200      	movs	r2, #0
  80024b4:	6879      	ldr	r1, [r7, #4]
- 80024b6:	f04f 30ff 	mov.w	r0, #4294967295
+ 80024b6:	f04f 30ff 	mov.w	r0, #4294967295	@ 0xffffffff
  80024ba:	f001 fc92 	bl	8003de2 <HAL_NVIC_SetPriority>
         uwTickPrio = TickPriority;
  80024be:	4a0a      	ldr	r2, [pc, #40]	@ (80024e8 <HAL_InitTick+0x70>)
@@ -9635,7 +9635,7 @@ __STATIC_INLINE uint32_t NVIC_EncodePriority (uint32_t PriorityGroup, uint32_t P
 
   return (
            ((PreemptPriority & (uint32_t)((1UL << (PreemptPriorityBits)) - 1UL)) << SubPriorityBits) |
- 8003d54:	f04f 32ff 	mov.w	r2, #4294967295
+ 8003d54:	f04f 32ff 	mov.w	r2, #4294967295	@ 0xffffffff
  8003d58:	69bb      	ldr	r3, [r7, #24]
  8003d5a:	fa02 f303 	lsl.w	r3, r2, r3
  8003d5e:	43da      	mvns	r2, r3
@@ -9644,7 +9644,7 @@ __STATIC_INLINE uint32_t NVIC_EncodePriority (uint32_t PriorityGroup, uint32_t P
  8003d64:	697b      	ldr	r3, [r7, #20]
  8003d66:	409a      	lsls	r2, r3
            ((SubPriority     & (uint32_t)((1UL << (SubPriorityBits    )) - 1UL)))
- 8003d68:	f04f 31ff 	mov.w	r1, #4294967295
+ 8003d68:	f04f 31ff 	mov.w	r1, #4294967295	@ 0xffffffff
  8003d6c:	697b      	ldr	r3, [r7, #20]
  8003d6e:	fa01 f303 	lsl.w	r3, r1, r3
  8003d72:	43d9      	mvns	r1, r3
@@ -9690,7 +9690,7 @@ __STATIC_INLINE uint32_t SysTick_Config(uint32_t ticks)
  8003da4:	6053      	str	r3, [r2, #4]
   NVIC_SetPriority (SysTick_IRQn, (1UL << __NVIC_PRIO_BITS) - 1UL); /* set Priority for Systick Interrupt */
  8003da6:	210f      	movs	r1, #15
- 8003da8:	f04f 30ff 	mov.w	r0, #4294967295
+ 8003da8:	f04f 30ff 	mov.w	r0, #4294967295	@ 0xffffffff
  8003dac:	f7ff ff8e 	bl	8003ccc <__NVIC_SetPriority>
   SysTick->VAL   = 0UL;                                             /* Load the SysTick Counter Value */
  8003db0:	4b05      	ldr	r3, [pc, #20]	@ (8003dc8 <SysTick_Config+0x40>)
@@ -14081,7 +14081,7 @@ HAL_StatusTypeDef HAL_FLASHEx_Erase(FLASH_EraseInitTypeDef *pEraseInit, uint32_t
       /*Initialization of PageError variable*/
       *PageError = 0xFFFFFFFFU;
  8005456:	683b      	ldr	r3, [r7, #0]
- 8005458:	f04f 32ff 	mov.w	r2, #4294967295
+ 8005458:	f04f 32ff 	mov.w	r2, #4294967295	@ 0xffffffff
  800545c:	601a      	str	r2, [r3, #0]
 
       for (page_index = pEraseInit->Page; page_index < (pEraseInit->Page + pEraseInit->NbPages); page_index++)
@@ -15790,7 +15790,7 @@ static HAL_StatusTypeDef I2C_WaitOnFlagUntilTimeout(I2C_HandleTypeDef *hi2c, uin
     /* Check for the Timeout */
     if (Timeout != HAL_MAX_DELAY)
  8005e0e:	683b      	ldr	r3, [r7, #0]
- 8005e10:	f1b3 3fff 	cmp.w	r3, #4294967295
+ 8005e10:	f1b3 3fff 	cmp.w	r3, #4294967295	@ 0xffffffff
  8005e14:	d02d      	beq.n	8005e72 <I2C_WaitOnFlagUntilTimeout+0x8a>
     {
       if (((HAL_GetTick() - Tickstart) > Timeout) || (Timeout == 0U))
@@ -15907,7 +15907,7 @@ static HAL_StatusTypeDef I2C_WaitOnTXISFlagUntilTimeout(I2C_HandleTypeDef *hi2c,
     /* Check for the Timeout */
     if (Timeout != HAL_MAX_DELAY)
  8005ebc:	68bb      	ldr	r3, [r7, #8]
- 8005ebe:	f1b3 3fff 	cmp.w	r3, #4294967295
+ 8005ebe:	f1b3 3fff 	cmp.w	r3, #4294967295	@ 0xffffffff
  8005ec2:	d025      	beq.n	8005f10 <I2C_WaitOnTXISFlagUntilTimeout+0x76>
     {
       if (((HAL_GetTick() - Tickstart) > Timeout) || (Timeout == 0U))
@@ -16119,7 +16119,7 @@ static HAL_StatusTypeDef I2C_IsErrorOccurred(I2C_HandleTypeDef *hi2c, uint32_t T
       /* Check for the Timeout */
       if (Timeout != HAL_MAX_DELAY)
  8005fe6:	68bb      	ldr	r3, [r7, #8]
- 8005fe8:	f1b3 3fff 	cmp.w	r3, #4294967295
+ 8005fe8:	f1b3 3fff 	cmp.w	r3, #4294967295	@ 0xffffffff
  8005fec:	d045      	beq.n	800607a <I2C_IsErrorOccurred+0xca>
       {
         if (((HAL_GetTick() - tickstart) > Timeout) || (Timeout == 0U))

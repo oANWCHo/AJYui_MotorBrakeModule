@@ -11,6 +11,9 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
  /brake_status   ◄─BrakeStatus── brake_bridge ◄─CAN 0x131── [CAN-USB] ◄═══  FDCAN1 ◄─ INA240 + state
  /brake_estop    ◄─Bool── (raised by bridge if heartbeat lost > 100 ms)
  /servo_command  ──Float32──►  brake_bridge  ──CAN 0x132──►  [CAN-USB] ═══►  FDCAN1  ─► Servo PWM (engaged pos, saved to flash)
+ /cmd_vel        ──Twist────►  brake_bridge  ──CAN 0x120──►  [CAN-USB] ═══►  FDCAN1  ─► Curtis 1510 (PID target speed)
+ /speed_enable   ──Bool─────►  brake_bridge  ──CAN 0x121──►  [CAN-USB] ═══►  FDCAN1  ─► Curtis run/release
+ /speed_status   ◄─Twist──── brake_bridge ◄─CAN 0x122── [CAN-USB] ◄═══  FDCAN1 ◄─ pulse speed sensor
 ```
 
 ## Topics
@@ -21,11 +24,17 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
 | `/brake_status`   | `motorbrake_msgs/msg/BrakeStatus` | STM32 → PC  | `current_ma`, `relay_active`, `watchdog_status`, `servo_angle_deg` (echo of last `/servo_command`) |
 | `/brake_estop`    | `std_msgs/msg/Bool`               | bridge → PC | `true` when the bridge has not seen a heartbeat for > 100 ms |
 | `/servo_command`  | `std_msgs/msg/Float32`            | PC → STM32  | "brake engaged" servo angle (0.0–180.0°); saved to STM32 flash, applied while relay is ON |
+| `/cmd_vel`        | `geometry_msgs/msg/Twist`         | PC → STM32  | `linear.x` = target wheel speed (m/s); sign = direction (>0 forward, <0 backward, 0 stop) |
+| `/speed_enable`   | `std_msgs/msg/Bool`               | PC → STM32  | `true` = run the Curtis PID speed loop, `false` = release the Curtis outputs |
+| `/speed_status`   | `geometry_msgs/msg/Twist`         | STM32 → PC  | `linear.x` = measured wheel speed (m/s), streamed ~20 ms; sign follows the commanded direction |
 
 ## CAN protocol (classic CAN, 1 Mbps, 11-bit IDs)
 
 | ID      | Dir        | DLC | Payload |
 |---------|------------|-----|---------|
+| `0x120` | PC → STM32 | 2   | `[0..1]` int16 target speed LE, 0.01 m/s per LSB (`raw = round(m/s × 100)`, ±327.67 m/s), signed = direction |
+| `0x121` | PC → STM32 | 1   | `data[0]` = 1 (speed loop ON) / 0 (release Curtis) |
+| `0x122` | STM32 → PC | 2   | `[0..1]` int16 measured speed LE, 0.01 m/s per LSB, sign follows commanded direction |
 | `0x130` | PC → STM32 | 1   | `data[0]` = 1 (Relay ON) / 0 (Relay OFF) |
 | `0x131` | STM32 → PC | 8   | `[0..3]` float32 `current_ma` LE, `[4]` `relay_active`, `[5]` `watchdog_status`, `[6..7]` uint16 seq LE |
 | `0x132` | PC → STM32 | 4   | `[0..3]` float32 `angle_deg` LE (engaged servo position, clamped 0–180°, saved to flash) |
@@ -158,6 +167,35 @@ ros2 topic pub -r 10 --times 5 /servo_command std_msgs/msg/Float32 "{data: 45.0}
 # Move servo to centre (90°)
 ros2 topic pub -r 10 --times 5 /servo_command std_msgs/msg/Float32 "{data: 90.0}"
 ```
+
+### Speed control (Curtis 1510 closed-loop)
+
+`/cmd_vel` sets the target speed but the Curtis PID loop only drives while
+`/speed_enable` is `true`. Enable the loop **once with a latched/long-lived
+publisher** (`-r 10` keeps it alive), then stream `/cmd_vel`. Send a target of
+`0.0` or set `/speed_enable` false to stop.
+
+```bash
+# 1. Enable the speed (keep this publisher running)
+ros2 topic pub -r 10 --times 5 /speed_enable std_msgs/msg/Bool "{data: true}"
+
+# 2. Drive forward at 1.5 m/s
+ros2 topic pub -r 10 --times 5 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 1.5}}"
+
+# Reverse at 0.8 m/s (negative = backward)
+ros2 topic pub -r 10 --times 5 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: -0.8}}"
+
+# Stop (target 0) — or drop /speed_enable to false to release the Curtis
+ros2 topic pub -r 10 --times 5 /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}}"
+ros2 topic pub -r 10 --times 5 /speed_enable std_msgs/msg/Bool "{data: false}"
+
+# Watch the measured speed coming back from the STM32
+ros2 topic echo /speed_status
+```
+
+On Docker, prefix any of the above with `sudo docker/run.sh` (one-shot) or run
+them inside `sudo docker/run.sh bash` — the bridge must already be up in another
+`sudo docker/run.sh` shell.
 
 For real/continuous control, prefer a long-lived publisher (rqt, a GUI button, or
 a small node) that completes discovery once and stays up, rather than a fresh
