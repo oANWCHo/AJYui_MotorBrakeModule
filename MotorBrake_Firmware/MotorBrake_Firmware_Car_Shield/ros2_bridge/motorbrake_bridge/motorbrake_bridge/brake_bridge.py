@@ -17,6 +17,19 @@ Topic  /servo_command (std_msgs/Float32)      -> CAN ID 0x132  (PC -> STM32)
         while the relay is ON. The servo position is no longer reported back,
         so BrakeStatus.servo_angle_deg echoes the last commanded angle.
 
+Closed-loop speed control (Curtis 1510). Speed on the wire is a signed
+little-endian int16 in 0.01 m/s units (raw = round(m/s * 100), range
+±327.67 m/s); the sign is direction (>0 forward, <0 backward, 0 = stop).
+
+Topic  /cmd_vel (geometry_msgs/Twist)         -> CAN ID 0x120  (PC -> STM32)
+        linear.x -> target wheel speed (m/s), scaled int16.
+Topic  /speed_enable (std_msgs/Bool)          -> CAN ID 0x121  (PC -> STM32)
+        data:true  -> run the PID speed loop (mode relay ON)
+        data:false -> release the Curtis outputs (input side)
+CAN ID 0x122 (STM32 -> PC, ~20 ms)            -> /speed_status (geometry_msgs/Twist)
+        linear.x = measured wheel speed (m/s), scaled int16; sign follows the
+        commanded direction (the pulse sensor itself is unsigned).
+
 Fail-safe: if no /brake_status heartbeat arrives for `heartbeat_timeout`
 seconds (default 0.1 s = 100 ms), the bridge raises E-Stop and latches
 True onto /brake_estop (std_msgs/Bool) until the link recovers.
@@ -34,7 +47,13 @@ import can
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32
+from geometry_msgs.msg import Twist
 from motorbrake_msgs.msg import BrakeStatus
+
+# Speed wire scaling: signed int16, 0.01 m/s per LSB (matches the STM32 firmware).
+SPEED_CMD_SCALE = 100.0
+_INT16_MIN = -32768
+_INT16_MAX = 32767
 
 
 class BrakeBridge(Node):
@@ -48,6 +67,9 @@ class BrakeBridge(Node):
         self.declare_parameter('cmd_can_id', 0x130)
         self.declare_parameter('status_can_id', 0x131)
         self.declare_parameter('servo_cmd_can_id', 0x132)
+        self.declare_parameter('cmd_vel_can_id', 0x120)
+        self.declare_parameter('speed_enable_can_id', 0x121)
+        self.declare_parameter('speed_status_can_id', 0x122)
         self.declare_parameter('heartbeat_timeout', 0.1)  # seconds (100 ms)
 
         self.can_interface = self.get_parameter('can_interface').value
@@ -56,6 +78,9 @@ class BrakeBridge(Node):
         self.cmd_can_id = int(self.get_parameter('cmd_can_id').value)
         self.status_can_id = int(self.get_parameter('status_can_id').value)
         self.servo_cmd_can_id = int(self.get_parameter('servo_cmd_can_id').value)
+        self.cmd_vel_can_id = int(self.get_parameter('cmd_vel_can_id').value)
+        self.speed_enable_can_id = int(self.get_parameter('speed_enable_can_id').value)
+        self.speed_status_can_id = int(self.get_parameter('speed_status_can_id').value)
         self.heartbeat_timeout = float(self.get_parameter('heartbeat_timeout').value)
 
         # ---- CAN bus -----------------------------------------------------
@@ -78,11 +103,16 @@ class BrakeBridge(Node):
         # ---- ROS interfaces ---------------------------------------------
         self.status_pub = self.create_publisher(BrakeStatus, 'brake_status', 10)
         self.estop_pub = self.create_publisher(Bool, 'brake_estop', 10)
+        self.speed_status_pub = self.create_publisher(Twist, 'speed_status', 10)
 
         self.cmd_sub = self.create_subscription(
             Bool, 'brake_command', self.on_brake_command, 10)
         self.servo_cmd_sub = self.create_subscription(
             Float32, 'servo_command', self.on_servo_command, 10)
+        self.cmd_vel_sub = self.create_subscription(
+            Twist, 'cmd_vel', self.on_cmd_vel, 10)
+        self.speed_enable_sub = self.create_subscription(
+            Bool, 'speed_enable', self.on_speed_enable, 10)
 
         # ---- Heartbeat / fail-safe state --------------------------------
         self._last_status_time = None      # monotonic time of last RX, None until first frame
@@ -135,7 +165,43 @@ class BrakeBridge(Node):
             self.get_logger().error(f'Failed to send servo command: {exc}')
 
     # ---------------------------------------------------------------------
-    # STM32 -> PC : CAN 0x131 -> /brake_status
+    # PC -> STM32 : /cmd_vel.linear.x -> CAN 0x120 (scaled int16 m/s)
+    # ---------------------------------------------------------------------
+    def on_cmd_vel(self, msg: Twist):
+        raw = int(round(msg.linear.x * SPEED_CMD_SCALE))
+        raw = max(_INT16_MIN, min(_INT16_MAX, raw))   # clamp to int16
+        frame = can.Message(
+            arbitration_id=self.cmd_vel_can_id,
+            data=struct.pack('<h', raw),
+            is_extended_id=False,
+        )
+        try:
+            self.bus.send(frame)
+            self.get_logger().debug(
+                f'/cmd_vel -> {msg.linear.x:.2f} m/s '
+                f'(CAN 0x{self.cmd_vel_can_id:03X})')
+        except can.CanError as exc:
+            self.get_logger().error(f'Failed to send cmd_vel: {exc}')
+
+    # ---------------------------------------------------------------------
+    # PC -> STM32 : /speed_enable -> CAN 0x121
+    # ---------------------------------------------------------------------
+    def on_speed_enable(self, msg: Bool):
+        frame = can.Message(
+            arbitration_id=self.speed_enable_can_id,
+            data=bytes([1 if msg.data else 0]),
+            is_extended_id=False,
+        )
+        try:
+            self.bus.send(frame)
+            self.get_logger().info(
+                f'/speed_enable -> {"ON" if msg.data else "OFF"} '
+                f'(CAN 0x{self.speed_enable_can_id:03X})')
+        except can.CanError as exc:
+            self.get_logger().error(f'Failed to send speed_enable: {exc}')
+
+    # ---------------------------------------------------------------------
+    # STM32 -> PC : CAN 0x131 -> /brake_status, CAN 0x122 -> /speed_status
     # ---------------------------------------------------------------------
     def _rx_loop(self):
         while self._running:
@@ -150,6 +216,8 @@ class BrakeBridge(Node):
 
             if frame.arbitration_id == self.status_can_id:
                 self._handle_brake_status(frame)
+            elif frame.arbitration_id == self.speed_status_can_id:
+                self._handle_speed_status(frame)
 
     def _handle_brake_status(self, frame):
         if len(frame.data) < 6:
@@ -179,6 +247,16 @@ class BrakeBridge(Node):
             self.get_logger().warn(
                 'STM32 reports watchdog_status=1 (E-Stop / open-load fault)',
                 throttle_duration_sec=1.0)
+
+    def _handle_speed_status(self, frame):
+        if len(frame.data) < 2:
+            self.get_logger().warn(
+                f'Short speed_status frame ({len(frame.data)} bytes), ignored')
+            return
+        raw = struct.unpack('<h', bytes(frame.data[0:2]))[0]
+        twist = Twist()
+        twist.linear.x = raw / SPEED_CMD_SCALE   # m/s
+        self.speed_status_pub.publish(twist)
 
     # ---------------------------------------------------------------------
     # Fail-safe : E-Stop when the heartbeat goes silent for > timeout
