@@ -308,7 +308,7 @@ void CurtisIO_OutputOverrideRun(uint8_t enable) {
 #define SPEED_CTRL_MCOR_MAX_V   5.0f
 
 /* Default PID gains (error m/s -> volts). Start conservative; tune live. */
-volatile float CurtisIO_Speed_Kp = 1.0f;
+volatile float CurtisIO_Speed_Kp = 0.5f;
 volatile float CurtisIO_Speed_Ki = 0.1f;
 volatile float CurtisIO_Speed_Kd = 0.0f;
 

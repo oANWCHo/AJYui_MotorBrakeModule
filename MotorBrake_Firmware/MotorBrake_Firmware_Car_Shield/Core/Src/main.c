@@ -201,6 +201,17 @@ volatile uint8_t output_test_enable = 0;
  * precedence over the auto self-test above (only one drives the outputs). Back to
  * 0 releases every output and hands the Curtis back to the input side. --- */
 volatile uint8_t output_override_enable = 0;
+
+/* --- Closed-loop speed control (bench/ROS). Set curtis_speed_target_mps to the
+ * desired wheel speed in m/s (sign = direction, 0 = stop), then flip
+ * speed_control_enable to 1: the PID loop energises the mode relay and drives
+ * the Curtis Forward/Backward/Pedal lines + MCOR throttle to hold that speed.
+ * Takes precedence over the manual override and auto self-test (only one drives
+ * the shared outputs). Back to 0 releases every output (mode relay OFF). Tune
+ * with CurtisIO_Speed_Kp/Ki/Kd; watch CurtisIO_Speed_* for telemetry. --- */
+volatile uint8_t speed_control_enable    = 0;
+volatile float   curtis_speed_target_mps = 0.0f;   // desired wheel speed, m/s (signed)
+volatile float   speed_sensor_mps        = 0.0f;   // measured speed magnitude, m/s (Live Expression)
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -442,15 +453,21 @@ int main(void)
 		curtis_pedal    = curtis_in.pedal;
 		mcor_volts      = CurtisIO_McorVolts(adc_buffer[MCOR_ADC_INDEX]);
 		speed_sensor_hz = CurtisIO_SpeedHz();
+		speed_sensor_mps = CurtisIO_SpeedMps();
 
-		/* Curtis output drivers (Live Expression, bench). Two mutually exclusive
+		/* Curtis output drivers (Live Expression, bench). Three mutually exclusive
 		 * modes share the mode relay + output lines, so only one may drive at a
-		 * time — the manual override wins when its flag is set:
+		 * time. Precedence: speed control > manual override > auto self-test.
+		 *   - speed_control_enable   : PID loop holds curtis_speed_target_mps (m/s)
 		 *   - output_override_enable : drive outputs to the CurtisIO_Override_* values
 		 *   - output_test_enable     : rotating auto self-test pattern / MCOR sweep
-		 * Both are non-blocking and release their outputs on the falling edge. */
-//		CurtisIO_OutputTestRun(output_test_enable && !output_override_enable,OUTPUT_TEST_PERIOD_MS);
-		CurtisIO_OutputOverrideRun(output_override_enable);
+		 * Each is non-blocking and releases its outputs on the falling edge; gate
+		 * the lower-priority ones off so a released mode does not fight the relay. */
+		uint8_t sc_on = speed_control_enable;
+		uint8_t ov_on = output_override_enable && !sc_on;
+		CurtisIO_SpeedControlRun(sc_on, curtis_speed_target_mps);
+		CurtisIO_OutputOverrideRun(ov_on);
+//		CurtisIO_OutputTestRun(output_test_enable && !ov_on && !sc_on, OUTPUT_TEST_PERIOD_MS);
 
 		/* Transmit the held servo angle (0x133) + /brake_status heartbeat on the
 		 * 20 ms tick. 0x133 goes FIRST so the bridge has the current angle in
