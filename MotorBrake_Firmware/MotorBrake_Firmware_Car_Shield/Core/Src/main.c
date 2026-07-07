@@ -21,7 +21,9 @@
 #include "adc.h"
 #include "dma.h"
 #include "fdcan.h"
+#include "i2c.h"
 #include "tim.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -295,8 +297,9 @@ int main(void)
   MX_FDCAN1_Init();
   MX_TIM1_Init();
   MX_TIM6_Init();
-  MX_TIM2_Init();   /* speed-sensor input capture (TIM2 CH1 / PA15) */
-
+  MX_I2C2_Init();
+  MX_UART4_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 	/* MCP4725 MCOR-out DAC lives on I2C2. CubeMX did not emit MX_I2C2_Init() in
 	 * the generated block, so bring it up here (USER CODE = regen-safe) before any

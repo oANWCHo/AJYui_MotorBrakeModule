@@ -1,4 +1,0 @@
-../Core/Src/flash_store.c:39:17:flash_pack_dw0	32	static
-../Core/Src/flash_store.c:44:17:flash_pack_dw1	32	static
-../Core/Src/flash_store.c:51:6:FlashStore_LoadAngles	56	static
-../Core/Src/flash_store.c:72:9:FlashStore_SaveAngles	64	static
