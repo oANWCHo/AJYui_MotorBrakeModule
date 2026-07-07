@@ -6,7 +6,7 @@
 #   ./run.sh ros2 topic echo /brake_status
 #
 # Requires can0 to be UP on the host first:
-#   sudo ip link set can0 up type can bitrate 1000000
+#   sudo ip link set can0 up type can bitrate 250000
 set -euo pipefail
 
 IMAGE="${IMAGE:-motorbrake-bridge}"

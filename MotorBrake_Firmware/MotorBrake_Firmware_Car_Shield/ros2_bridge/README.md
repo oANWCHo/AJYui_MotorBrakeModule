@@ -13,7 +13,9 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
  /servo_command  ──Float32──►  brake_bridge  ──CAN 0x132──►  [CAN-USB] ═══►  FDCAN1  ─► Servo PWM (engaged pos, saved to flash)
  /cmd_vel        ──Twist────►  brake_bridge  ──CAN 0x120──►  [CAN-USB] ═══►  FDCAN1  ─► Curtis 1510 (PID target speed)
  /speed_enable   ──Bool─────►  brake_bridge  ──CAN 0x121──►  [CAN-USB] ═══►  FDCAN1  ─► Curtis run/release
- /speed_status   ◄─Twist──── brake_bridge ◄─CAN 0x122── [CAN-USB] ◄═══  FDCAN1 ◄─ pulse speed sensor
+ /speed_status   ◄─SpeedStatus── brake_bridge ◄─CAN 0x122── [CAN-USB] ◄═══  FDCAN1 ◄─ measured/target speed + flags
+ /speed_diagnostics ◄─SpeedDiagnostics── brake_bridge ◄─CAN 0x123── [CAN-USB] ◄═══  FDCAN1 ◄─ raw Curtis I/O
+ /brake_angle    ◄─Float32── brake_bridge ◄─CAN 0x134── [CAN-USB] ◄═══  FDCAN1 ◄─ servo/brake angle (deg)
 ```
 
 ## Topics
@@ -21,23 +23,32 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
 | Topic             | Type                              | Direction   | Meaning |
 |-------------------|-----------------------------------|-------------|---------|
 | `/brake_command`  | `std_msgs/msg/Bool`               | PC → STM32  | `true` = Relay ON (engage brake), `false` = Relay OFF (release) |
-| `/brake_status`   | `motorbrake_msgs/msg/BrakeStatus` | STM32 → PC  | `current_ma`, `relay_active`, `watchdog_status`, `servo_angle_deg` (echo of last `/servo_command`) |
+| `/brake_status`   | `motorbrake_msgs/msg/BrakeStatus` | STM32 → PC  | `current_ma`, `relay_active`, `watchdog_status`, `e_stop` (PC13), `servo_angle_deg` (echo of last `/servo_command`) |
 | `/brake_estop`    | `std_msgs/msg/Bool`               | bridge → PC | `true` when the bridge has not seen a heartbeat for > 100 ms |
 | `/servo_command`  | `std_msgs/msg/Float32`            | PC → STM32  | "brake engaged" servo angle (0.0–180.0°); saved to STM32 flash, applied while relay is ON |
 | `/cmd_vel`        | `geometry_msgs/msg/Twist`         | PC → STM32  | `linear.x` = target wheel speed (m/s); sign = direction (>0 forward, <0 backward, 0 stop) |
 | `/speed_enable`   | `std_msgs/msg/Bool`               | PC → STM32  | `true` = run the Curtis PID speed loop, `false` = release the Curtis outputs |
-| `/speed_status`   | `geometry_msgs/msg/Twist`         | STM32 → PC  | `linear.x` = measured wheel speed (m/s), streamed ~20 ms; sign follows the commanded direction |
+| `/speed_status`   | `motorbrake_msgs/msg/SpeedStatus` | STM32 → PC  | measured + target speed (m/s), controller flags, fault_code, sequence; streamed ~20 ms |
+| `/speed_diagnostics` | `motorbrake_msgs/msg/SpeedDiagnostics` | STM32 → PC | raw Curtis I/O: input/output line flags, mode relay, MCOR in/out voltage, speed-sensor Hz |
+| `/brake_angle`    | `std_msgs/msg/Float32`            | STM32 → PC  | current servo/brake angle in degrees (0–180), streamed ~20 ms |
 
-## CAN protocol (classic CAN, 1 Mbps, 11-bit IDs)
+## CAN protocol (classic CAN, 250 kbps, 11-bit IDs)
 
 | ID      | Dir        | DLC | Payload |
 |---------|------------|-----|---------|
 | `0x120` | PC → STM32 | 2   | `[0..1]` int16 target speed LE, 0.01 m/s per LSB (`raw = round(m/s × 100)`, ±327.67 m/s), signed = direction |
 | `0x121` | PC → STM32 | 1   | `data[0]` = 1 (speed loop ON) / 0 (release Curtis) |
-| `0x122` | STM32 → PC | 2   | `[0..1]` int16 measured speed LE, 0.01 m/s per LSB, sign follows commanded direction |
+| `0x122` | STM32 → PC | 8   | `[0..1]` int16 measured speed, `[2..3]` int16 target speed (0.01 m/s/LSB LE), `[4]` status_flags, `[5]` fault_code, `[6..7]` uint16 seq LE |
+| `0x123` | STM32 → PC | 8   | `[0]` input_flags, `[1]` output_flags (bit3 = mode relay), `[2..3]` MCOR in mV, `[4..5]` MCOR out mV, `[6..7]` speed_sensor Hz (all uint16 LE) |
 | `0x130` | PC → STM32 | 1   | `data[0]` = 1 (Relay ON) / 0 (Relay OFF) |
-| `0x131` | STM32 → PC | 8   | `[0..3]` float32 `current_ma` LE, `[4]` `relay_active`, `[5]` `watchdog_status`, `[6..7]` uint16 seq LE |
-| `0x132` | PC → STM32 | 4   | `[0..3]` float32 `angle_deg` LE (engaged servo position, clamped 0–180°, saved to flash) |
+| `0x131` | STM32 → PC | 8   | `[0..3]` float32 `current_ma` LE, `[4]` `relay_active`, `[5]` bit0 `watchdog_status` / bit1 PC13 `e_stop`, `[6..7]` uint16 seq LE |
+| `0x132` | PC → STM32 | 8   | `[0..3]` float32 `start_deg` LE (released pos), `[4..7]` float32 `stop_deg` LE (engaged pos); saved to flash |
+| `0x133` | STM32 → PC | 8   | `[0..3]` float32 `start_deg` LE, `[4..7]` float32 `stop_deg` LE (held servo config echo) |
+| `0x134` | STM32 → PC | 1   | `data[0]` = uint8 current servo/brake angle in degrees (0–180) |
+
+`0x122` `status_flags`: bit0 controller_enabled, bit1 forward_cmd, bit2 reverse_cmd,
+bit3 pedal_output_active, bit4 speed_sensor_valid, bit5 timeout_active, bit6 PC13 e_stop,
+bit7 fault_active.
 
 The STM32 sends `0x131` every ~20 ms (heartbeat). Bitrate, IDs and the 100 ms
 fail-safe timeout are all editable: in firmware via the `#define`s near the top of
@@ -62,7 +73,7 @@ needed — the CAN logic lives in the `USER CODE` sections of `main.c`, `fdcan.c
 **SocketCAN-native adapters** (CANable/candleLight `gs_usb`, PEAK, Kvaser, …):
 
 ```bash
-sudo ip link set can0 up type can bitrate 1000000
+sudo ip link set can0 up type can bitrate 250000
 # verify:
 candump can0        # from the can-utils package
 ```
@@ -70,11 +81,11 @@ candump can0        # from the can-utils package
 **slcan adapters** (CANable in slcan firmware, USBtin, …):
 
 ```bash
-sudo slcand -o -c -s8 /dev/ttyACM0 can0   # -s8 = 1 Mbps
+sudo slcand -o -c -s5 /dev/ttyACM0 can0   # -s5 = 250 kbps
 sudo ip link set up can0
 ```
 
-(`-s` codes: `s6`=500k, `s8`=1M. Match the firmware bitrate.)
+(`-s` codes: `s5`=250k, `s6`=500k, `s8`=1M. Match the firmware bitrate — 250 kbps.)
 
 ## 3) Get ROS 2 — Option A (native) or Option B (Docker)
 
@@ -95,7 +106,7 @@ cd ros2_bridge
 sudo docker build -t motorbrake-bridge -f docker/Dockerfile .
 
 # 3. Bring up the CAN interface ON THE HOST (kernel-level, not in the container)
-sudo ip link set can0 up type can bitrate 1000000
+sudo ip link set can0 up type can bitrate 250000
 
 # 4. Run the bridge
 sudo docker/run.sh
@@ -135,7 +146,7 @@ source install/setup.bash
 ros2 run motorbrake_bridge brake_bridge
 # override defaults if needed:
 ros2 run motorbrake_bridge brake_bridge --ros-args \
-    -p can_channel:=can0 -p can_bitrate:=1000000 -p heartbeat_timeout:=0.1
+    -p can_channel:=can0 -p can_bitrate:=250000 -p heartbeat_timeout:=0.1
 ```
 
 ## 5) Use it (commands from the slide)

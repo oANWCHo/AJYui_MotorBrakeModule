@@ -1,0 +1,9 @@
+[0.000000] (-) TimerEvent: {}
+[0.000231] (motorbrake_msgs) JobQueued: {'identifier': 'motorbrake_msgs', 'dependencies': OrderedDict()}
+[0.000290] (motorbrake_bridge) JobQueued: {'identifier': 'motorbrake_bridge', 'dependencies': OrderedDict({'motorbrake_msgs': '/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware_Car_Shield/ros2_bridge/install/motorbrake_msgs'})}
+[0.000343] (motorbrake_msgs) JobStarted: {'identifier': 'motorbrake_msgs'}
+[0.004475] (motorbrake_msgs) JobProgress: {'identifier': 'motorbrake_msgs', 'progress': 'cmake'}
+[0.005084] (motorbrake_msgs) StderrLine: {'line': b'Traceback (most recent call last):\n  File "/usr/lib/python3/dist-packages/colcon_core/executor/__init__.py", line 91, in __call__\n    rc = await self.task(*args, **kwargs)\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/usr/lib/python3/dist-packages/colcon_core/task/__init__.py", line 93, in __call__\n    return await task_method(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/usr/lib/python3/dist-packages/colcon_ros/task/ament_cmake/build.py", line 59, in build\n    rc = await extension.build(\n         ^^^^^^^^^^^^^^^^^^^^^^\n        skip_hook_creation=False,\n        ^^^^^^^^^^^^^^^^^^^^^^^^^\n        environment_callback=add_app_to_cpp)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/usr/lib/python3/dist-packages/colcon_cmake/task/cmake/build.py", line 87, in build\n    rc = await self._reconfigure(args, env)\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/usr/lib/python3/dist-packages/colcon_cmake/task/cmake/build.py", line 169, in _reconfigure\n    raise RuntimeError("Could not find \'cmake\' executable")\nRuntimeError: Could not find \'cmake\' executable\n'}
+[0.005456] (motorbrake_msgs) JobEnded: {'identifier': 'motorbrake_msgs', 'rc': 1}
+[0.015319] (motorbrake_bridge) JobSkipped: {'identifier': 'motorbrake_bridge'}
+[0.015340] (-) EventReactorShutdown: {}

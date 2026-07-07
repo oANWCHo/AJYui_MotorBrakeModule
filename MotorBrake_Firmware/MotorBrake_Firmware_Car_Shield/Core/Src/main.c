@@ -47,7 +47,8 @@
  * /brake_status  (BrakeStatus.msg): STM32 -> PC, ID 0x131, 8-byte heartbeat:
  *     [0..3] float32 current_ma (little-endian)
  *     [4]    uint8  relay_active   (1 = Relay G2R-24 ON, 0 = OFF)
- *     [5]    uint8  watchdog_status(0 = Normal, 1 = Triggered/fault)
+ *     [5]    uint8  status bits: bit0 = watchdog_status (0 = Normal, 1 =
+ *            Triggered/fault), bit1 = PC13 E_Stop live status (1 = active)
  *     [6..7] uint16 heartbeat sequence counter (little-endian)
  * /servo_command : PC -> STM32, ID 0x132, 8-byte. Two independent servo angles,
  *            each a little-endian float32 clamped to 0–180°. Stored in flash and
@@ -63,6 +64,11 @@
  *            live values after each overwrite), same layout as /servo_command:
  *     [0..3] float32 start_deg (little-endian)
  *     [4..7] float32 stop_deg  (little-endian)
+ * /brake_angle   : STM32 -> PC, ID 0x134, 1-byte. Current servo/brake angle the
+ *            sequencer is driving to, in whole degrees (0..180). Diagram assigns
+ *            this to 0x132, but 0x132/0x133 are already used above for the servo
+ *            start/stop config, so /brake_angle lives on the free ID 0x134:
+ *     [0] uint8 angle_deg (0..180).
  * ---- Closed-loop speed control (Curtis 1510), scaled int16 in m/s ----------
  * The speed value on the wire is a signed little-endian int16 in units of
  * 0.01 m/s (SPEED_CMD_SCALE): raw = round(m/s * 100), range ±327.67 m/s. The
@@ -71,21 +77,51 @@
  *     [0..1] int16 linear_x : target wheel speed, 0.01 m/s/LSB (little-endian).
  * /speed_enable (std_msgs/Bool)           : PC -> STM32, ID 0x121, data[0] =
  *            1 -> run the PID speed loop (mode relay ON), 0 -> release outputs.
- * /speed_status (Twist.linear.x)          : STM32 -> PC, ID 0x122, 2-byte, sent
- *            on the same 20 ms tick as 0x131. Measured wheel speed, same scaled
- *            int16 encoding as /cmd_vel; sign follows the commanded direction
- *            (the pulse sensor itself is unsigned):
- *     [0..1] int16 linear_x : current wheel speed, 0.01 m/s/LSB (little-endian). */
+ * /speed_status  : STM32 -> PC, ID 0x122, 8-byte, sent on the same 20 ms tick as
+ *            0x131. Measured + target speed and controller flags:
+ *     [0..1] int16 measured_speed : current wheel speed, 0.01 m/s/LSB (LE); sign
+ *            follows the commanded direction (the pulse sensor is unsigned).
+ *     [2..3] int16 target_speed   : commanded speed, 0.01 m/s/LSB (LE).
+ *     [4]    uint8 status_flags    : see SPEED_FLAG_* (bit0 enabled, bit1 fwd_cmd,
+ *            bit2 rev_cmd, bit3 pedal, bit4 sensor_valid, bit5 timeout, bit6
+ *            PC13 E_Stop, bit7 fault)
+ *     [5]    uint8 fault_code      : 0 = none (reserved for future fault codes).
+ *     [6..7] uint16 sequence counter (little-endian).
+ * /speed_diagnostics : STM32 -> PC, ID 0x123, 8-byte, same 20 ms tick. Raw
+ *            Curtis I/O snapshot for debugging:
+ *     [0]    uint8 input_flags  : bit0 FWD in, bit1 REV in, bit2 Pedal in.
+ *     [1]    uint8 output_flags : bit0 FWD out, bit1 REV out, bit2 Pedal out,
+ *            bit3 mode_relay.
+ *     [2..3] uint16 MCOR input  mV (little-endian) — throttle wiper read.
+ *     [4..5] uint16 MCOR output mV (little-endian) — last DAC value driven.
+ *     [6..7] uint16 speed_sensor_hz (little-endian) — pulse frequency. */
 #define CAN_ID_CMD_VEL        0x120u   /* RX: target speed (int16, 0.01 m/s/LSB) */
 #define CAN_ID_SPEED_ENABLE   0x121u   /* RX: enable PID speed control (bool)    */
-#define CAN_ID_SPEED_STATUS   0x122u   /* TX: measured speed (int16, 0.01 m/s/LSB) */
+#define CAN_ID_SPEED_STATUS   0x122u   /* TX: /speed_status, 8 bytes (see below)  */
+#define CAN_ID_SPEED_DIAG     0x123u   /* TX: /speed_diagnostics, 8 bytes         */
 #define CAN_ID_BRAKE_CMD      0x130u
 #define CAN_ID_BRAKE_STATUS   0x131u
 #define CAN_ID_SERVO_CMD      0x132u
 #define CAN_ID_SERVO_STATUS   0x133u
+#define CAN_ID_BRAKE_ANGLE    0x134u   /* TX: /brake_angle, 1 byte servo angle    */
 
 /* Speed value wire scaling: signed int16, 0.01 m/s per LSB (round-trip m/s). */
 #define SPEED_CMD_SCALE       100.0f
+
+/* /speed_status status_flags (byte 4) bit positions (see 0x122 layout below). */
+#define SPEED_FLAG_ENABLED    0x01u   /* bit0: speed controller enabled          */
+#define SPEED_FLAG_FWD_CMD    0x02u   /* bit1: forward output commanded          */
+#define SPEED_FLAG_REV_CMD    0x04u   /* bit2: reverse output commanded          */
+#define SPEED_FLAG_PEDAL      0x08u   /* bit3: pedal output active               */
+#define SPEED_FLAG_SENSOR_OK  0x10u   /* bit4: speed sensor reading valid        */
+#define SPEED_FLAG_TIMEOUT    0x20u   /* bit5: /speed_cmd timeout active         */
+#define SPEED_FLAG_ESTOP      0x40u   /* bit6: PC13 E-Stop active                */
+#define SPEED_FLAG_FAULT      0x80u   /* bit7: speed fault active                */
+
+/* /speed_cmd (0x120) watchdog: if no target frame arrives within this window the
+ * SPEED_FLAG_TIMEOUT bit is set so the Jetson bridge can react (the diagram's
+ * "cmd_vel timeout -> brake" rule). */
+#define SPEED_CMD_TIMEOUT_MS  500u
 
 /* ---- INA240A2D current sensor (gain 50 V/V) with a 2 mOhm shunt ----------
  * Unidirectional wiring (REF tied to GND) so 0 A -> ~0 V and only the
@@ -122,8 +158,10 @@
  * spikes (relay switching noise) that were tripping the overcurrent latch. */
 #define CURRENT_AVG_WINDOW           16u
 
-/* Heartbeat: TIM6 elapses every 10 ms, so 2 ticks -> 20 ms status rate. */
-#define HEARTBEAT_TICKS       2u
+/* Heartbeat: TIM6 elapses every 10 ms. The status frames alternate between a
+ * brake group and a speed group on each flag (see the main-loop TX block), so a
+ * flag every 10 ms (1 tick) gives each group a 20 ms transmit rate. */
+#define HEARTBEAT_TICKS       1u
 
 /* On a normal release (relay commanded OFF) the servo is driven back to the
  * start position and we keep the relay energised for this long so it can
@@ -158,6 +196,14 @@
 /* E-Stop on PD2: active-low with pull-up (idle HIGH, triggered LOW -> falling). */
 #define ESTOP_Pin             GPIO_PIN_2
 #define ESTOP_GPIO_Port       GPIOD
+
+/* Second E-Stop on PC13 (labelled E_Stop in the .ioc; pin defines E_Stop_Pin /
+ * E_Stop_GPIO_Port come from main.h). This one is polled and only *reported* in
+ * the status frames (0x131 bit / 0x122 flag) — it does not itself cut the relay
+ * or speed loop; the Jetson acts on it. The .ioc gives PC13 an internal pull-up,
+ * so idle = HIGH and a pressed/opened E-Stop pulls it LOW (active-low). Flip
+ * ESTOP_PC13_ACTIVE_LOW to 0 if the button is wired active-high. */
+#define ESTOP_PC13_ACTIVE_LOW 1
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -187,13 +233,23 @@ typedef enum {
 
 /* --- Brake status / safety state shared with the ISRs --- */
 volatile uint8_t  watchdog_status = 0;   // 0 = Normal, 1 = Triggered (E-Stop or open-load fault). Latched.
+volatile uint8_t  estop_pc13     = 0;    // live PC13 E_Stop status (1 = active), reported in 0x131/0x122
 volatile uint8_t  can_tx_flag = 0;       // set by TIM6 every HEARTBEAT_TICKS, consumed in main loop
 float             current_ma = 0.0f;     // latest INA240 current reading, milliamps
 uint16_t          heartbeat_seq = 0;     // rolling counter so the PC can detect dropped frames
 
 FDCAN_TxHeaderTypeDef CanTxHeader;        // configured once in CAN_App_Init() — used for 0x131
 FDCAN_TxHeaderTypeDef CanServoTxHeader;   // configured once in CAN_App_Init() — used for 0x133
-FDCAN_TxHeaderTypeDef CanSpeedTxHeader;   // configured once in CAN_App_Init() — used for 0x120
+FDCAN_TxHeaderTypeDef CanSpeedTxHeader;   // configured once in CAN_App_Init() — used for 0x122
+FDCAN_TxHeaderTypeDef CanSpeedDiagTxHeader; // configured once in CAN_App_Init() — used for 0x123
+FDCAN_TxHeaderTypeDef CanBrakeAngleTxHeader; // configured once in CAN_App_Init() — used for 0x134
+
+/* --- Speed-status telemetry shared with the ISRs / status senders --- */
+uint16_t          speed_seq       = 0;   // /speed_status sequence counter (0x122 [6..7])
+uint8_t           speed_fault_code = 0;  // 0 = none; reserved for future speed faults
+volatile uint32_t last_cmd_vel_tick = 0; // HAL tick of the last /speed_cmd RX (0 = none yet)
+volatile uint8_t  cmd_vel_seen    = 0;   // 1 once the first /speed_cmd has arrived
+volatile uint8_t  brake_servo_deg = STOP_ANGLE_DEFAULT; // current servo target, whole deg (0x134)
 
 /* --- Curtis 1510 input readings, refreshed each main-loop pass (Live Expression) --- */
 volatile uint8_t curtis_forward  = 0;   // Forward_IN_to_MCU  (PC5) raw level
@@ -234,7 +290,9 @@ void SystemClock_Config(void);
 static void  CAN_App_Init(void);          // FDCAN filter + start + RX notification
 static void  BrakeStatus_Send(void);      // pack and transmit the /brake_status heartbeat frame
 static void  ServoStatus_Send(void);      // transmit the held start/stop angles (0x133)
-static void  SpeedStatus_Send(void);      // transmit the speed-sensor reading (0x120)
+static void  BrakeAngle_Send(void);       // transmit the current servo/brake angle (0x134)
+static void  SpeedStatus_Send(void);      // transmit /speed_status (0x122, 8-byte)
+static void  SpeedDiag_Send(void);        // transmit /speed_diagnostics (0x123, 8-byte)
 /* Persisted start/stop servo angles now live in flash_store.[ch]:
  *   FlashStore_LoadAngles() / FlashStore_SaveAngles() */
 /* USER CODE END PFP */
@@ -301,22 +359,6 @@ int main(void)
   MX_UART4_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-	/* MCP4725 MCOR-out DAC lives on I2C2. CubeMX did not emit MX_I2C2_Init() in
-	 * the generated block, so bring it up here (USER CODE = regen-safe) before any
-	 * CurtisIO_McorWrite*() call. */
-	MX_I2C2_Init();
-
-	/* PC1 = local toggle button (active-high, internal pull-down). Configured
-	 * here in USER CODE so it survives CubeMX regeneration of gpio.c (CubeMX
-	 * generates this pin as USER_SW with GPIO_NOPULL). */
-	GPIO_InitTypeDef btn_init = {0};
-	__HAL_RCC_GPIOC_CLK_ENABLE();
-	btn_init.Pin = BTN_TOGGLE_Pin;
-	btn_init.Mode = GPIO_MODE_INPUT;
-	btn_init.Pull = GPIO_PULLDOWN;
-	btn_init.Speed = GPIO_SPEED_FREQ_LOW;
-	HAL_GPIO_Init(BTN_TOGGLE_GPIO_Port, &btn_init);
-
 	/* E-Stop (PD2): CubeMX generates this EXTI pin as GPIO_NOPULL, which leaves
 	 * the active-low line floating and fires spurious falling edges -> false
 	 * watchdog_status=1. Re-init with internal pull-up (USER CODE = regen-safe)
@@ -459,6 +501,13 @@ int main(void)
 		/* Drive the servo PWM to the sequencer's current target. */
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, deg_to_pulse(servo_target));
 
+		/* Publish the current servo angle on /brake_angle (0x134): whole degrees,
+		 * clamped to 0..180 so it fits one byte. */
+		float ang = servo_target;
+		if (ang < 0.0f)   ang = 0.0f;
+		if (ang > 180.0f) ang = 180.0f;
+		brake_servo_deg = (uint8_t) (ang + 0.5f);
+
 		/* Persist freshly received start/stop angles outside the RX ISR. Erasing
 		 * bank 2 is RWW-safe, so this does not stall the heartbeat below. */
 		/* Debounced flash persist: commit only after the angles have been stable for
@@ -476,6 +525,15 @@ int main(void)
 		 *   - Forward/Backward/Pedal digital lines (raw pin levels)
 		 *   - MCOR throttle wiper voltage (ADC1_IN2 via the DMA buffer)
 		 *   - speed-sensor pulse frequency (TIM2 CH1 input capture) */
+		/* Poll the PC13 E_Stop line (active-low with pull-up). Live status only —
+		 * reported in the 0x131/0x122 frames for the Jetson to act on. */
+		GPIO_PinState estop_lvl = HAL_GPIO_ReadPin(E_Stop_GPIO_Port, E_Stop_Pin);
+#if ESTOP_PC13_ACTIVE_LOW
+		estop_pc13 = (estop_lvl == GPIO_PIN_RESET) ? 1u : 0u;
+#else
+		estop_pc13 = (estop_lvl == GPIO_PIN_SET) ? 1u : 0u;
+#endif
+
 		CurtisDigitalInputs_t curtis_in;
 		CurtisIO_ReadDigital(&curtis_in);
 		curtis_forward  = curtis_in.forward;
@@ -499,15 +557,27 @@ int main(void)
 		CurtisIO_OutputOverrideRun(ov_on);
 //		CurtisIO_OutputTestRun(output_test_enable && !ov_on && !sc_on, OUTPUT_TEST_PERIOD_MS);
 
-		/* Transmit the held servo angle (0x133) + /brake_status heartbeat on the
-		 * 20 ms tick. 0x133 goes FIRST so the bridge has the current angle in
-		 * hand before it publishes /brake_status on receiving 0x131 — otherwise
-		 * the first heartbeat after a fresh MCU start carries a stale 0°. */
+		/* Status transmit, split across two 10 ms ticks so we never queue more
+		 * than 3 frames at once — the STM32G4 FDCAN Tx FIFO is only 3 deep, and
+		 * queuing all 5 frames back-to-back overflowed it and silently dropped
+		 * the last two (0x122 /speed_status + 0x123 /speed_diagnostics).
+		 *   tick A: brake group  (0x133 servo, 0x131 heartbeat, 0x134 angle) = 3
+		 *   tick B: speed group  (0x122 status, 0x123 diagnostics)           = 2
+		 * Each group therefore still transmits every 20 ms. 0x133 goes before
+		 * 0x131 so the bridge has the current angle before it publishes
+		 * /brake_status on receiving 0x131. */
+		static uint8_t tx_group = 0;
 		if (can_tx_flag) {
 			can_tx_flag = 0;
-			ServoStatus_Send();
-			BrakeStatus_Send();
-			SpeedStatus_Send();
+			if (tx_group == 0) {
+				ServoStatus_Send();   /* 0x133 */
+				BrakeStatus_Send();   /* 0x131 */
+				BrakeAngle_Send();    /* 0x134 */
+			} else {
+				SpeedStatus_Send();   /* 0x122 */
+				SpeedDiag_Send();     /* 0x123 */
+			}
+			tx_group ^= 1u;
 		}
 	}
   /* USER CODE END 3 */
@@ -567,17 +637,14 @@ void SystemClock_Config(void)
   */
 static void CAN_App_Init(void)
 {
-	/* Re-initialise FDCAN1 here (in USER CODE) so the settings survive CubeMX
-	 * regeneration of fdcan.c. MX_FDCAN1_Init() already ran, so the peripheral
-	 * is in configuration mode; we override the values that CubeMX regenerates
-	 * from the .ioc back to placeholders.
-	 *   1 Mbps @ 170 MHz kernel clock: 170e6 / (10 * (1+13+3)) = 1 000 000 bps
-	 *   Sample point = (1+13)/17 = 82.4 %                                      */
+	/* Bit timing / bitrate now come from the .ioc (NominalPrescaler = 40 ->
+	 * 250 kbps @ 170 MHz, sample point 82.4 %), so MX_FDCAN1_Init() already set
+	 * them. Two settings the .ioc does not carry are applied here before the RX
+	 * filters are configured, then HAL_FDCAN_Init() is re-run to commit them:
+	 *   - AutoRetransmission: ENABLE (CubeMX default is DISABLE)
+	 *   - StdFiltersNbr:      4, so the acceptance filters below can allocate.
+	 * Must still match the SocketCAN bitrate on the Jetson (bitrate 250000). */
 	hfdcan1.Init.AutoRetransmission = ENABLE;
-	hfdcan1.Init.NominalPrescaler = 10;
-	hfdcan1.Init.NominalSyncJumpWidth = 3;
-	hfdcan1.Init.NominalTimeSeg1 = 13;
-	hfdcan1.Init.NominalTimeSeg2 = 3;
 	/* slot 0: /brake_command, 1: /servo_command, 2: /cmd_vel, 3: /speed_enable */
 	hfdcan1.Init.StdFiltersNbr = 4;
 	if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK) {
@@ -638,10 +705,20 @@ static void CAN_App_Init(void)
 	CanServoTxHeader.Identifier = CAN_ID_SERVO_STATUS;
 	CanServoTxHeader.DataLength = FDCAN_DLC_BYTES_8;
 
-	/* Speed-status frame (0x122): 2-byte, int16 scaled m/s (linear_x). */
+	/* Brake-angle frame (0x134): 1-byte, current servo angle in whole degrees. */
+	CanBrakeAngleTxHeader = CanTxHeader;
+	CanBrakeAngleTxHeader.Identifier = CAN_ID_BRAKE_ANGLE;
+	CanBrakeAngleTxHeader.DataLength = FDCAN_DLC_BYTES_1;
+
+	/* Speed-status frame (0x122): 8-byte (measured/target int16 + flags + seq). */
 	CanSpeedTxHeader = CanTxHeader;
 	CanSpeedTxHeader.Identifier = CAN_ID_SPEED_STATUS;
-	CanSpeedTxHeader.DataLength = FDCAN_DLC_BYTES_2;
+	CanSpeedTxHeader.DataLength = FDCAN_DLC_BYTES_8;
+
+	/* Speed-diagnostics frame (0x123): 8-byte raw Curtis I/O snapshot. */
+	CanSpeedDiagTxHeader = CanTxHeader;
+	CanSpeedDiagTxHeader.Identifier = CAN_ID_SPEED_DIAG;
+	CanSpeedDiagTxHeader.DataLength = FDCAN_DLC_BYTES_8;
 
 	if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
 		Error_Handler();
@@ -673,7 +750,9 @@ static void BrakeStatus_Send(void)
 	uint8_t TxData[8];
 	memcpy(&TxData[0], &current_ma, sizeof(float)); /* [0..3] float32, little-endian */
 	TxData[4] = relay_active;                        /* [4]    relay_active */
-	TxData[5] = watchdog_status;                     /* [5]    watchdog_status */
+	/* [5] status bits: bit0 = watchdog_status (E-Stop/fault latch, as before),
+	 *                  bit1 = PC13 E_Stop live status. */
+	TxData[5] = (uint8_t) ((watchdog_status & 0x01u) | ((estop_pc13 & 0x01u) << 1));
 	TxData[6] = (uint8_t) (heartbeat_seq & 0xFFu);   /* [6..7] sequence counter */
 	TxData[7] = (uint8_t) (heartbeat_seq >> 8);
 	heartbeat_seq++;
@@ -697,22 +776,101 @@ static void ServoStatus_Send(void)
 }
 
 /**
-  * @brief Report the current wheel speed (0x122) as Twist.linear.x, encoded as a
-  *        signed int16 in 0.01 m/s units. The pulse sensor is unsigned, so the
-  *        sign is taken from the commanded direction (curtis_speed_target_mps).
+  * @brief Report the current servo/brake angle on /brake_angle (0x134): one byte,
+  *        whole degrees (0..180), tracking whatever the sequencer is driving to.
+  */
+static void BrakeAngle_Send(void)
+{
+	uint8_t TxData[1];
+	TxData[0] = brake_servo_deg;   /* [0] uint8 angle_deg (0..180) */
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanBrakeAngleTxHeader, TxData);
+}
+
+/**
+  * @brief Report /speed_status (0x122, 8-byte): measured + target speed (signed
+  *        int16, 0.01 m/s/LSB), a status_flags byte, a fault_code, and a rolling
+  *        sequence counter. The pulse sensor is unsigned, so the sign of both
+  *        speeds is taken from the commanded direction (curtis_speed_target_mps).
   */
 static void SpeedStatus_Send(void)
 {
 	float mag = speed_sensor_mps;   /* measured magnitude, m/s (>= 0) */
 	/* Re-apply the commanded sign so the PC sees a signed cmd_vel-style speed. */
 	float signed_mps = (curtis_speed_target_mps < 0.0f) ? -mag : mag;
-	int16_t raw = mps_to_raw(signed_mps);
+	int16_t measured_raw = mps_to_raw(signed_mps);
+	int16_t target_raw   = mps_to_raw(curtis_speed_target_mps);
 
-	uint8_t TxData[2];
-	TxData[0] = (uint8_t) (raw & 0xFFu);          /* [0..1] int16 linear_x, LE */
-	TxData[1] = (uint8_t) ((raw >> 8) & 0xFFu);
+	/* status_flags: pull the live output-line state from the speed controller
+	 * telemetry (only valid while the loop drives), plus sensor/timeout/fault. */
+	uint8_t timeout_active =
+			(cmd_vel_seen && (HAL_GetTick() - last_cmd_vel_tick) >= SPEED_CMD_TIMEOUT_MS)
+					? 1u : 0u;
+	uint8_t flags = 0u;
+	if (speed_control_enable)        flags |= SPEED_FLAG_ENABLED;
+	if (CurtisIO_Speed_forward)      flags |= SPEED_FLAG_FWD_CMD;
+	if (CurtisIO_Speed_backward)     flags |= SPEED_FLAG_REV_CMD;
+	if (CurtisIO_Speed_pedal)        flags |= SPEED_FLAG_PEDAL;
+	if (speed_sensor_hz > 0.0f)      flags |= SPEED_FLAG_SENSOR_OK;
+	if (timeout_active)              flags |= SPEED_FLAG_TIMEOUT;
+	if (estop_pc13)                  flags |= SPEED_FLAG_ESTOP;
+	if (speed_fault_code != 0u)      flags |= SPEED_FLAG_FAULT;
+
+	uint8_t TxData[8];
+	TxData[0] = (uint8_t) (measured_raw & 0xFFu);        /* [0..1] measured, LE */
+	TxData[1] = (uint8_t) ((measured_raw >> 8) & 0xFFu);
+	TxData[2] = (uint8_t) (target_raw & 0xFFu);          /* [2..3] target, LE   */
+	TxData[3] = (uint8_t) ((target_raw >> 8) & 0xFFu);
+	TxData[4] = flags;                                   /* [4]    status_flags */
+	TxData[5] = speed_fault_code;                        /* [5]    fault_code   */
+	TxData[6] = (uint8_t) (speed_seq & 0xFFu);           /* [6..7] sequence, LE */
+	TxData[7] = (uint8_t) ((speed_seq >> 8) & 0xFFu);
+	speed_seq++;
 
 	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanSpeedTxHeader, TxData);
+}
+
+/**
+  * @brief Report /speed_diagnostics (0x123, 8-byte): raw Curtis I/O snapshot —
+  *        the digital input lines, the driven output lines + mode relay, the MCOR
+  *        throttle voltages (in from the wiper, out from the DAC) and the speed
+  *        sensor pulse frequency. For bench/telemetry debugging.
+  */
+static void SpeedDiag_Send(void)
+{
+	uint8_t input_flags = 0u;
+	if (curtis_forward)  input_flags |= 0x01u;   /* bit0 FWD input   */
+	if (curtis_backward) input_flags |= 0x02u;   /* bit1 REV input   */
+	if (curtis_pedal)    input_flags |= 0x04u;   /* bit2 Pedal input */
+
+	uint8_t output_flags = 0u;
+	if (CurtisIO_GetOutForward())  output_flags |= 0x01u;  /* bit0 FWD output */
+	if (CurtisIO_GetOutBackward()) output_flags |= 0x02u;  /* bit1 REV output */
+	if (CurtisIO_GetOutPedal())    output_flags |= 0x04u;  /* bit2 Pedal out  */
+	if (CurtisIO_ModeRelayActive())output_flags |= 0x08u;  /* bit3 mode relay */
+
+	/* Clamp both MCOR voltages to the uint16 mV range before packing. */
+	float in_mv  = mcor_volts * 1000.0f;
+	float out_mv = CurtisIO_McorOutVolts() * 1000.0f;
+	if (in_mv  < 0.0f) in_mv  = 0.0f;  if (in_mv  > 65535.0f) in_mv  = 65535.0f;
+	if (out_mv < 0.0f) out_mv = 0.0f;  if (out_mv > 65535.0f) out_mv = 65535.0f;
+	uint16_t mcor_in_mv  = (uint16_t) (in_mv  + 0.5f);
+	uint16_t mcor_out_mv = (uint16_t) (out_mv + 0.5f);
+
+	float hz = speed_sensor_hz;
+	if (hz < 0.0f) hz = 0.0f;  if (hz > 65535.0f) hz = 65535.0f;
+	uint16_t sensor_hz = (uint16_t) (hz + 0.5f);
+
+	uint8_t TxData[8];
+	TxData[0] = input_flags;                             /* [0] input_flags   */
+	TxData[1] = output_flags;                            /* [1] output_flags  */
+	TxData[2] = (uint8_t) (mcor_in_mv & 0xFFu);          /* [2..3] MCOR in mV  */
+	TxData[3] = (uint8_t) ((mcor_in_mv >> 8) & 0xFFu);
+	TxData[4] = (uint8_t) (mcor_out_mv & 0xFFu);         /* [4..5] MCOR out mV */
+	TxData[5] = (uint8_t) ((mcor_out_mv >> 8) & 0xFFu);
+	TxData[6] = (uint8_t) (sensor_hz & 0xFFu);           /* [6..7] sensor Hz   */
+	TxData[7] = (uint8_t) ((sensor_hz >> 8) & 0xFFu);
+
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CanSpeedDiagTxHeader, TxData);
 }
 
 /**
@@ -738,6 +896,9 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 			int16_t raw = (int16_t) ((uint16_t) RxData[0]
 			                       | ((uint16_t) RxData[1] << 8));
 			curtis_speed_target_mps = raw_to_mps(raw);
+			/* Stamp the arrival for the /speed_status timeout flag (0x122 bit5). */
+			last_cmd_vel_tick = HAL_GetTick();
+			cmd_vel_seen      = 1u;
 		} else if (RxHeader.Identifier == CAN_ID_SPEED_ENABLE) {
 			/* std_msgs/Bool: 1 -> run the PID speed loop, 0 -> release outputs. */
 			speed_control_enable = (RxData[0] != 0u) ? 1u : 0u;
@@ -803,7 +964,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 			led_counter = 0;
 		}
 
-		// 3. ตั้ง Flag ส่ง Heartbeat /brake_status ทุกๆ HEARTBEAT_TICKS (20ms)
+		// 3. ตั้ง Flag ส่งสถานะทุกๆ HEARTBEAT_TICKS (10ms). main loop สลับกลุ่ม
+		//    brake/speed แต่ละครั้ง -> แต่ละกลุ่มถูกส่งทุก 20ms
 		static uint16_t hb_counter = 0;
 		if (++hb_counter >= HEARTBEAT_TICKS) {
 			hb_counter = 0;

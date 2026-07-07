@@ -46,6 +46,9 @@ static volatile uint8_t  s_have_prev    = 0;
 static volatile uint32_t s_last_edge_ms = 0;
 static volatile float    s_freq_hz      = 0.0f;
 
+/* Last MCOR DAC code written (any driver), for /speed_diagnostics readback. */
+static volatile uint16_t s_last_mcor_code = 0;
+
 /* Exported functions --------------------------------------------------------*/
 uint8_t CurtisIO_Forward(void) {
     return (HAL_GPIO_ReadPin(Forward_IN_to_MCU_GPIO_Port, Forward_IN_to_MCU_Pin)
@@ -134,6 +137,7 @@ uint8_t CurtisIO_McorWriteRaw(uint16_t code12) {
     uint8_t buf[2];
     buf[0] = (uint8_t) ((code12 >> 8) & 0x0Fu);
     buf[1] = (uint8_t) (code12 & 0xFFu);
+    s_last_mcor_code = code12;   /* remember for CurtisIO_McorOutVolts() */
     return (HAL_I2C_Master_Transmit(&hi2c2, (uint16_t) (MCP4725_I2C_ADDR << 1),
             buf, sizeof(buf), MCP4725_I2C_TIMEOUT) == HAL_OK) ? 1u : 0u;
 }
@@ -143,6 +147,31 @@ uint8_t CurtisIO_McorWriteVolts(float volts) {
     if (volts > MCP4725_VREF) volts = MCP4725_VREF;
     uint16_t code = (uint16_t) ((volts / MCP4725_VREF) * (float) MCP4725_MAX_CODE + 0.5f);
     return CurtisIO_McorWriteRaw(code);
+}
+
+/* ----------------------- Output-side state readback ----------------------- */
+uint8_t CurtisIO_ModeRelayActive(void) {
+    return (HAL_GPIO_ReadPin(Relay_Mode_GPIO_Port, Relay_Mode_Pin)
+            == GPIO_PIN_SET) ? 1u : 0u;
+}
+
+uint8_t CurtisIO_GetOutForward(void) {
+    return (HAL_GPIO_ReadPin(Forward_IN_from_MCU_GPIO_Port, Forward_IN_from_MCU_Pin)
+            == GPIO_PIN_SET) ? 1u : 0u;
+}
+
+uint8_t CurtisIO_GetOutBackward(void) {
+    return (HAL_GPIO_ReadPin(Backward_IN_from_MCU_GPIO_Port, Backward_IN_from_MCU_Pin)
+            == GPIO_PIN_SET) ? 1u : 0u;
+}
+
+uint8_t CurtisIO_GetOutPedal(void) {
+    return (HAL_GPIO_ReadPin(Pedal_IN_from_MCU_GPIO_Port, Pedal_IN_from_MCU_Pin)
+            == GPIO_PIN_SET) ? 1u : 0u;
+}
+
+float CurtisIO_McorOutVolts(void) {
+    return ((float) s_last_mcor_code / (float) MCP4725_MAX_CODE) * MCP4725_VREF;
 }
 
 /* ---------------------------- Output self-test ---------------------------- */

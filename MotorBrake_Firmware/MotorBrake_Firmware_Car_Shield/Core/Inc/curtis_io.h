@@ -119,6 +119,30 @@ uint8_t CurtisIO_McorWriteRaw(uint16_t code12);
   */
 uint8_t CurtisIO_McorWriteVolts(float volts);
 
+/* ----------------------- Output-side state readback ----------------------- *
+ * Read back what the MCU is currently driving to the Curtis. Used to fill the
+ * /speed_diagnostics CAN frame (0x123). These reflect the last levels/values
+ * written by any of the output drivers (speed control / override / self-test).
+ * ------------------------------------------------------------------------- */
+
+/**
+  * @brief  Mode-relay state (Relay_Mode, PA10): 1 = MCU outputs routed to the
+  *         Curtis (output side active), 0 = pass-through / input side.
+  */
+uint8_t CurtisIO_ModeRelayActive(void);
+
+/* Current output-line levels driven to the Curtis (readback of the ODR on the
+ * Forward/Backward/Pedal _IN_from_MCU pins). 1 = high, 0 = low. */
+uint8_t CurtisIO_GetOutForward(void);
+uint8_t CurtisIO_GetOutBackward(void);
+uint8_t CurtisIO_GetOutPedal(void);
+
+/**
+  * @brief  Last MCOR throttle voltage written to the MCP4725 DAC.
+  * @retval Volts (0..VREF), tracked from every CurtisIO_McorWrite*() call.
+  */
+float CurtisIO_McorOutVolts(void);
+
 /* ============================ Output self-test ============================ *
  * Bench test that exercises every output at once so you can watch them move in
  * a Live Expression (and on a scope/meter): it energises the mode relay, walks
