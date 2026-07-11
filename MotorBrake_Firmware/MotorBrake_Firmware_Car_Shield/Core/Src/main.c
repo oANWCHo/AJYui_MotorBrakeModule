@@ -198,12 +198,15 @@
 #define ESTOP_GPIO_Port       GPIOD
 
 /* Second E-Stop on PC13 (labelled E_Stop in the .ioc; pin defines E_Stop_Pin /
- * E_Stop_GPIO_Port come from main.h). This one is polled and only *reported* in
- * the status frames (0x131 bit / 0x122 flag) — it does not itself cut the relay
- * or speed loop; the Jetson acts on it. The .ioc gives PC13 an internal pull-up,
- * so idle = HIGH and a pressed/opened E-Stop pulls it LOW (active-low). Flip
- * ESTOP_PC13_ACTIVE_LOW to 0 if the button is wired active-high. */
-#define ESTOP_PC13_ACTIVE_LOW 1
+ * E_Stop_GPIO_Port come from main.h). This one is polled and, while active,
+ * acted on locally (non-latching): the firmware forces the brake fully engaged
+ * to STOP_ANGLE_DEFAULT, holds the relay closed, and zeroes the speed target.
+ * When PC13 releases, the normal relay_cmd / speed command flow resumes. It is
+ * also still reported in the status frames (0x131 bit / 0x122 flag).
+ * Wiring: PC13 is treated as active-HIGH — a pressed/active E-Stop drives the
+ * line HIGH. Flip ESTOP_PC13_ACTIVE_LOW back to 1 if the button is wired
+ * active-low (idle HIGH via pull-up, pressed pulls LOW). */
+#define ESTOP_PC13_ACTIVE_LOW 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -401,6 +404,21 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+		/* Poll the PC13 E_Stop line first so the brake sequencer and speed loop
+		 * below act on the current level (no one-cycle lag). Active-HIGH by
+		 * default (ESTOP_PC13_ACTIVE_LOW). While active the firmware forces the
+		 * brake engaged (see the sequencer) and commands speed 0; it clears the
+		 * moment the line releases. Also reported in 0x131/0x122. */
+		GPIO_PinState estop_lvl = HAL_GPIO_ReadPin(E_Stop_GPIO_Port, E_Stop_Pin);
+#if ESTOP_PC13_ACTIVE_LOW
+		estop_pc13 = (estop_lvl == GPIO_PIN_RESET) ? 1u : 0u;
+#else
+		estop_pc13 = (estop_lvl == GPIO_PIN_SET) ? 1u : 0u;
+#endif
+		if (estop_pc13) {
+			curtis_speed_target_mps = 0.0f;   /* command speed 0 while E-Stop active */
+		}
+
 		/* Relay/servo sequencer:
 		 *   OFF  -> ON         : commanded ON (no fault) -> relay closes, servo to brake_angle
 		 *   ON                 : servo follows brake_angle live (re-sent /servo_command)
@@ -422,6 +440,15 @@ int main(void)
 			HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 			servo_target = released_deg;
 			brake_state  = BRAKE_OFF;
+		} else if (estop_pc13) {
+			/* PC13 E-Stop active (non-latching): force the brake fully engaged to
+			 * STOP_ANGLE_DEFAULT and hold the relay closed. Speed is zeroed above.
+			 * Enter BRAKE_ON so that when PC13 releases the sequencer returns to
+			 * normal — staying engaged if relay_cmd==1, or releasing gracefully to
+			 * start_angle_deg if relay_cmd==0. */
+			HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
+			servo_target = STOP_ANGLE_DEFAULT;
+			brake_state  = BRAKE_ON;
 		} else {
 			switch (brake_state) {
 			case BRAKE_OFF:
@@ -525,15 +552,7 @@ int main(void)
 		 *   - Forward/Backward/Pedal digital lines (raw pin levels)
 		 *   - MCOR throttle wiper voltage (ADC1_IN2 via the DMA buffer)
 		 *   - speed-sensor pulse frequency (TIM2 CH1 input capture) */
-		/* Poll the PC13 E_Stop line (active-low with pull-up). Live status only —
-		 * reported in the 0x131/0x122 frames for the Jetson to act on. */
-		GPIO_PinState estop_lvl = HAL_GPIO_ReadPin(E_Stop_GPIO_Port, E_Stop_Pin);
-#if ESTOP_PC13_ACTIVE_LOW
-		estop_pc13 = (estop_lvl == GPIO_PIN_RESET) ? 1u : 0u;
-#else
-		estop_pc13 = (estop_lvl == GPIO_PIN_SET) ? 1u : 0u;
-#endif
-
+		/* (PC13 E_Stop is polled at the top of the loop and acted on there.) */
 		CurtisDigitalInputs_t curtis_in;
 		CurtisIO_ReadDigital(&curtis_in);
 		curtis_forward  = curtis_in.forward;
@@ -550,12 +569,17 @@ int main(void)
 		 *   - output_override_enable : drive outputs to the CurtisIO_Override_* values
 		 *   - output_test_enable     : rotating auto self-test pattern / MCOR sweep
 		 * Each is non-blocking and releases its outputs on the falling edge; gate
-		 * the lower-priority ones off so a released mode does not fight the relay. */
+		 * the lower-priority ones off so a released mode does not fight the relay.
+		 * A PC13 E-Stop also cuts the manual override and self-test drivers so they
+		 * cannot keep driving the motor past the E-Stop (the override/self-test
+		 * paths ignore the speed target, so zeroing it alone would not stop them).
+		 * The PID path stays live but with the target forced to 0 above, so if it
+		 * was enabled it actively holds speed 0. */
 		uint8_t sc_on = speed_control_enable;
-		uint8_t ov_on = output_override_enable && !sc_on;
+		uint8_t ov_on = output_override_enable && !sc_on && !estop_pc13;
 		CurtisIO_SpeedControlRun(sc_on, curtis_speed_target_mps);
 		CurtisIO_OutputOverrideRun(ov_on);
-//		CurtisIO_OutputTestRun(output_test_enable && !ov_on && !sc_on, OUTPUT_TEST_PERIOD_MS);
+//		CurtisIO_OutputTestRun(output_test_enable && !ov_on && !sc_on && !estop_pc13, OUTPUT_TEST_PERIOD_MS);
 
 		/* Status transmit, split across two 10 ms ticks so we never queue more
 		 * than 3 frames at once — the STM32G4 FDCAN Tx FIFO is only 3 deep, and

@@ -1,10 +1,36 @@
-21:35:40 **** Incremental Build of configuration Debug for project MotorBrake_Firmware_Car_Shield ****
+12:50:13 **** Incremental Build of configuration Debug for project MotorBrake_Firmware_Car_Shield ****
 make -j20 all 
+arm-none-eabi-gcc "../Core/Src/main.c" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32G474xx -c -I../Core/Inc -I../Drivers/STM32G4xx_HAL_Driver/Inc -I../Drivers/STM32G4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32G4xx/Include -I../Drivers/CMSIS/Include -O0 -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"Core/Src/main.d" -MT"Core/Src/main.o" --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "Core/Src/main.o"
+../Core/Src/main.c: In function 'SpeedDiag_Send':
+../Core/Src/main.c:878:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  878 |         if (in_mv  < 0.0f) in_mv  = 0.0f;  if (in_mv  > 65535.0f) in_mv  = 65535.0f;
+      |         ^~
+../Core/Src/main.c:878:44: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  878 |         if (in_mv  < 0.0f) in_mv  = 0.0f;  if (in_mv  > 65535.0f) in_mv  = 65535.0f;
+      |                                            ^~
+../Core/Src/main.c:879:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  879 |         if (out_mv < 0.0f) out_mv = 0.0f;  if (out_mv > 65535.0f) out_mv = 65535.0f;
+      |         ^~
+../Core/Src/main.c:879:44: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  879 |         if (out_mv < 0.0f) out_mv = 0.0f;  if (out_mv > 65535.0f) out_mv = 65535.0f;
+      |                                            ^~
+../Core/Src/main.c:884:9: warning: this 'if' clause does not guard... [-Wmisleading-indentation]
+  884 |         if (hz < 0.0f) hz = 0.0f;  if (hz > 65535.0f) hz = 65535.0f;
+      |         ^~
+../Core/Src/main.c:884:36: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the 'if'
+  884 |         if (hz < 0.0f) hz = 0.0f;  if (hz > 65535.0f) hz = 65535.0f;
+      |                                    ^~
+arm-none-eabi-gcc -o "MotorBrake_Firmware_Car_Shield.elf" @"objects.list"   -mcpu=cortex-m4 -T"/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware_Car_Shield/STM32G474RETX_FLASH.ld" --specs=nosys.specs -Wl,-Map="MotorBrake_Firmware_Car_Shield.map" -Wl,--gc-sections -static --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+Finished building target: MotorBrake_Firmware_Car_Shield.elf
+ 
 arm-none-eabi-size  MotorBrake_Firmware_Car_Shield.elf 
+arm-none-eabi-objdump -h -S MotorBrake_Firmware_Car_Shield.elf  > "MotorBrake_Firmware_Car_Shield.list"
    text	   data	    bss	    dec	    hex	filename
-  43796	     72	   2712	  46580	   b5f4	MotorBrake_Firmware_Car_Shield.elf
+  43880	     72	   2712	  46664	   b648	MotorBrake_Firmware_Car_Shield.elf
 Finished building: default.size.stdout
  
+Finished building: MotorBrake_Firmware_Car_Shield.list
+ 
 
-21:35:40 Build Finished. 0 errors, 0 warnings. (took 75ms)
+12:50:13 Build Finished. 0 errors, 3 warnings. (took 265ms)
 

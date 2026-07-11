@@ -1,0 +1,10 @@
+mcor_volts
+curtis_forward
+curtis_backward
+output_override_enable
+CurtisIO_Override_mcor_volts
+CurtisIO_Override_forward
+CurtisIO_Override_pedal
+speed_sensor_hz
+speed_sensor_mps
+estop_pc13

@@ -247,13 +247,13 @@ class BrakeBridge(Node):
         relay_active = bool(frame.data[4])
         # byte5: bit0 = watchdog_status, bit1 = PC13 E_Stop live status.
         watchdog_status = int(frame.data[5] & 0x01)
-        e_stop = bool(frame.data[5] & 0x02)
+        e_stop_active = bool(frame.data[5] & 0x02)
 
         status = BrakeStatus()
         status.current_ma = float(current_ma)
         status.relay_active = relay_active
         status.watchdog_status = watchdog_status
-        status.e_stop = e_stop
+        status.e_stop_active = e_stop_active
         status.servo_angle_deg = self._servo_angle_deg  # echo of last /servo_command
         self.status_pub.publish(status)
 
@@ -296,7 +296,7 @@ class BrakeBridge(Node):
         msg.pedal_output_active = bool(flags & 0x08)
         msg.speed_sensor_valid = bool(flags & 0x10)
         msg.timeout_active = bool(flags & 0x20)
-        msg.e_stop = bool(flags & 0x40)
+        msg.e_stop_active = bool(flags & 0x40)
         msg.fault_active = bool(flags & 0x80)
         msg.fault_code = int(fault_code)
         msg.sequence = int(sequence)
