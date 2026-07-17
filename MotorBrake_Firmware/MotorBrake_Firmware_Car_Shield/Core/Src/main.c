@@ -123,6 +123,13 @@
  * "cmd_vel timeout -> brake" rule). */
 #define SPEED_CMD_TIMEOUT_MS  500u
 
+/* Auto-brake on stop: when the commanded speed (/cmd_vel, 0x120) is 0 but the
+ * wheel is still turning, engage the brake until the vehicle actually stops.
+ * The brake auto-releases once the measured speed magnitude drops to/below this
+ * threshold, so it is not held forever when already stationary. Tunable at run
+ * time via the auto_brake_speed_thresh_mps Live Expression. */
+#define AUTO_BRAKE_SPEED_THRESH_DEFAULT  0.05f  /* m/s, ~5 cm/s */
+
 /* ---- INA240A2D current sensor (gain 50 V/V) with a 2 mOhm shunt ----------
  * Unidirectional wiring (REF tied to GND) so 0 A -> ~0 V and only the
  * positive direction is measured.
@@ -285,6 +292,11 @@ volatile uint8_t output_override_enable = 0;
 volatile uint8_t speed_control_enable    = 0;
 volatile float   curtis_speed_target_mps = 0.0f;   // desired wheel speed, m/s (signed)
 volatile float   speed_sensor_mps        = 0.0f;   // measured speed magnitude, m/s (Live Expression)
+
+/* Auto-brake on stop: engage the brake when the commanded speed is 0 while the
+ * wheel is still moving faster than this threshold; release once it drops back
+ * to/below it. Adjustable live (m/s). See AUTO_BRAKE_SPEED_THRESH_DEFAULT. */
+volatile float   auto_brake_speed_thresh_mps = AUTO_BRAKE_SPEED_THRESH_DEFAULT;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -435,6 +447,21 @@ int main(void)
 		float engaged_deg  = stop_angle_deg;
 		float released_deg = start_angle_deg;
 
+		/* Auto-brake on stop: if a /cmd_vel has been seen, the commanded speed is
+		 * 0, and the wheel is still turning above auto_brake_speed_thresh_mps,
+		 * request the brake so the car is held until it actually stops. It clears
+		 * automatically once the measured speed drops to/below the threshold, so
+		 * the brake is not engaged forever while already stationary. cmd_vel_seen
+		 * gates it off on boot (default target 0). speed_sensor_mps is the |speed|
+		 * magnitude refreshed once per loop (last iteration's value here).
+		 * The auto request is OR-ed with the manual relay_cmd (/brake_command). */
+		uint8_t auto_brake =
+				(cmd_vel_seen
+				 && curtis_speed_target_mps > -0.005f
+				 && curtis_speed_target_mps <  0.005f
+				 && speed_sensor_mps > auto_brake_speed_thresh_mps) ? 1u : 0u;
+		uint8_t brake_req = (relay_cmd || auto_brake) ? 1u : 0u;
+
 		if (watchdog_status == 1) {
 			/* E-Stop / latched fault: open relay now, no graceful return. */
 			HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
@@ -444,8 +471,9 @@ int main(void)
 			/* PC13 E-Stop active (non-latching): force the brake fully engaged to
 			 * STOP_ANGLE_DEFAULT and hold the relay closed. Speed is zeroed above.
 			 * Enter BRAKE_ON so that when PC13 releases the sequencer returns to
-			 * normal — staying engaged if relay_cmd==1, or releasing gracefully to
-			 * start_angle_deg if relay_cmd==0. */
+			 * normal — staying engaged if a brake is still requested (manual
+			 * relay_cmd or auto-brake), or releasing gracefully to start_angle_deg
+			 * otherwise. */
 			HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
 			servo_target = STOP_ANGLE_DEFAULT;
 			brake_state  = BRAKE_ON;
@@ -454,7 +482,7 @@ int main(void)
 			case BRAKE_OFF:
 				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_RESET);
 				servo_target = released_deg;
-				if (relay_cmd == 1) {
+				if (brake_req == 1) {
 					HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
 					servo_target = engaged_deg;
 					brake_state  = BRAKE_ON;
@@ -464,7 +492,7 @@ int main(void)
 			case BRAKE_ON:
 				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
 				servo_target = engaged_deg;   /* follow live angle updates */
-				if (relay_cmd == 0) {
+				if (brake_req == 0) {
 					servo_target = released_deg; /* drive to release position before powering off */
 					release_tick = HAL_GetTick();
 					brake_state  = BRAKE_RELEASING;
@@ -474,7 +502,7 @@ int main(void)
 			case BRAKE_RELEASING:
 				HAL_GPIO_WritePin(RELAY_Brake_GPIO_Port, RELAY_Brake_Pin, GPIO_PIN_SET);
 				servo_target = released_deg;
-				if (relay_cmd == 1) {              /* re-engaged mid-release */
+				if (brake_req == 1) {              /* re-engaged mid-release */
 					servo_target = engaged_deg;
 					brake_state  = BRAKE_ON;
 				} else if ((HAL_GetTick() - release_tick) >= SERVO_SETTLE_MS) {
