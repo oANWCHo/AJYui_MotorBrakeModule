@@ -9,6 +9,7 @@
 		<item key="SmartImportRootWizardPage.STORE_NESTED_PROJECTS" value="true"/>
 		<item key="SmartImportRootWizardPage.STORE_CONFIGURE_NATURES" value="true"/>
 		<list key="org.eclipse.ui.internal.wizards.datatransfer.SmartImportRootWizardPage.knownSources">
+			<item value="D:\Nano\AJYui_MotorBrakeModule\MotorBrake_Firmware"/>
 			<item value="D:\Nano\AJYui_MotorBrakeModule\MotorBrake_Firmware\MotorBrake_Firmware_Car_Shield"/>
 			<item value="D:\Nano\AJYui_MotorBrakeModule\MotorBrake_Firmware\MotorBrake_Firmware"/>
 			<item value="/home/nigo/Nano/Another_job/AJYui_MotorBrakeModule/MotorBrake_Firmware/MotorBrake_Firmware_Car_Data_Log"/>
