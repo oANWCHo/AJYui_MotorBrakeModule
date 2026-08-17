@@ -15,6 +15,7 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
  /speed_enable   ──Bool─────►  brake_bridge  ──CAN 0x121──►  [CAN-USB] ═══►  FDCAN1  ─► Curtis run/release
  /speed_status   ◄─SpeedStatus── brake_bridge ◄─CAN 0x122── [CAN-USB] ◄═══  FDCAN1 ◄─ measured/target speed + flags
  /speed_diagnostics ◄─SpeedDiagnostics── brake_bridge ◄─CAN 0x123── [CAN-USB] ◄═══  FDCAN1 ◄─ raw Curtis I/O
+ /control_mode   ◄─ControlMode── brake_bridge ◄─CAN 0x123── [CAN-USB] ◄═══  FDCAN1 ◄─ mode relay (passthrough vs system)
  /brake_angle    ◄─Float32── brake_bridge ◄─CAN 0x134── [CAN-USB] ◄═══  FDCAN1 ◄─ servo/brake angle (deg)
 ```
 
@@ -30,7 +31,33 @@ the STM32 + a thin ROS 2 bridge node on the PC** (SocketCAN via python-can).
 | `/speed_enable`   | `std_msgs/msg/Bool`               | PC → STM32  | `true` = run the Curtis PID speed loop, `false` = release the Curtis outputs |
 | `/speed_status`   | `motorbrake_msgs/msg/SpeedStatus` | STM32 → PC  | measured + target speed (m/s), controller flags, fault_code, sequence; streamed ~20 ms |
 | `/speed_diagnostics` | `motorbrake_msgs/msg/SpeedDiagnostics` | STM32 → PC | raw Curtis I/O: input/output line flags, mode relay, MCOR in/out voltage, speed-sensor Hz |
+| `/control_mode`   | `motorbrake_msgs/msg/ControlMode` | STM32 → PC  | who currently drives the Curtis: `MODE_PASSTHROUGH` (manual pedal wiring) or `MODE_SYSTEM` (this board); see below |
 | `/brake_angle`    | `std_msgs/msg/Float32`            | STM32 → PC  | current servo/brake angle in degrees (0–180), streamed ~20 ms |
+
+### `/control_mode` — passthrough vs. system control
+
+The bridge derives this from the mode relay (`Relay_Mode`, `PA10`) carried in
+`0x123` bit3, and republishes it at the same ~20 ms rate as `/speed_diagnostics`:
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | `MODE_PASSTHROUGH` (0) = pedal/direction wired straight to the Curtis; `MODE_SYSTEM` (1) = MCU outputs routed to the Curtis |
+| `system_control` | convenience bool, `mode == MODE_SYSTEM` |
+| `controller_enabled` | what was *asked for* on `/speed_enable` |
+
+`mode` is a hardware readback of the relay contacts, so it is the field to trust
+for "who owns the throttle right now". `controller_enabled` is only the commanded
+intent — the firmware energises the relay on the rising edge of `/speed_enable`
+and lets it settle before driving, so `controller_enabled` briefly leads `mode`.
+**A lasting disagreement (`controller_enabled: true` with `mode: 0`) means the
+relay did not actually switch** — worth alarming on in a higher-level controller.
+
+```bash
+ros2 topic echo /control_mode
+```
+
+Note the brake side has no passthrough concept: `/brake_command`, `/servo_command`
+and the auto-brake logic always drive the relay and servo from the MCU.
 
 ## CAN protocol (classic CAN, 250 kbps, 11-bit IDs)
 

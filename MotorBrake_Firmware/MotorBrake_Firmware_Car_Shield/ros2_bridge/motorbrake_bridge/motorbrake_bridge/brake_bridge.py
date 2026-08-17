@@ -36,6 +36,9 @@ CAN ID 0x122 (STM32 -> PC, ~20 ms)            -> /speed_status (motorbrake_msgs/
 CAN ID 0x123 (STM32 -> PC, ~20 ms)            -> /speed_diagnostics (motorbrake_msgs/SpeedDiagnostics)
         [0] input_flags, [1] output_flags, [2..3] MCOR in mV, [4..5] MCOR out mV,
         [6..7] speed_sensor_hz.
+        Also republished as /control_mode (motorbrake_msgs/ControlMode): the
+        mode relay (output_flags bit3) says whether the Curtis is driven by this
+        board (MODE_SYSTEM) or by the manual pedal wiring (MODE_PASSTHROUGH).
 
 Fail-safe: if no /brake_status heartbeat arrives for `heartbeat_timeout`
 seconds (default 0.1 s = 100 ms), the bridge raises E-Stop and latches
@@ -55,7 +58,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32
 from geometry_msgs.msg import Twist
-from motorbrake_msgs.msg import BrakeStatus, SpeedStatus, SpeedDiagnostics
+from motorbrake_msgs.msg import (
+    BrakeStatus, SpeedStatus, SpeedDiagnostics, ControlMode)
 
 # Speed wire scaling: signed int16, 0.01 m/s per LSB (matches the STM32 firmware).
 SPEED_CMD_SCALE = 100.0
@@ -118,6 +122,7 @@ class BrakeBridge(Node):
         self.speed_status_pub = self.create_publisher(SpeedStatus, 'speed_status', 10)
         self.speed_diag_pub = self.create_publisher(
             SpeedDiagnostics, 'speed_diagnostics', 10)
+        self.control_mode_pub = self.create_publisher(ControlMode, 'control_mode', 10)
 
         self.cmd_sub = self.create_subscription(
             Bool, 'brake_command', self.on_brake_command, 10)
@@ -133,6 +138,11 @@ class BrakeBridge(Node):
         self._estop_active = False
         self._servo_angle_deg = 0.0        # last angle we commanded; echoed into BrakeStatus
         self._lock = threading.Lock()
+
+        # Control-mode state. Both are written only from the CAN RX thread:
+        # controller_enabled comes from 0x122, the mode relay from 0x123.
+        self._controller_enabled = False
+        self._last_control_mode = None     # last published mode, for change logging
 
         # Check the heartbeat at twice the timeout rate.
         self.create_timer(self.heartbeat_timeout / 2.0, self.check_heartbeat)
@@ -302,6 +312,9 @@ class BrakeBridge(Node):
         msg.sequence = int(sequence)
         self.speed_status_pub.publish(msg)
 
+        # Kept for /control_mode: the commanded intent, to pair with the relay readback.
+        self._controller_enabled = msg.controller_enabled
+
     def _handle_speed_diagnostics(self, frame):
         # 0x123, 8-byte: [0] input_flags, [1] output_flags, [2..3] MCOR in mV,
         # [4..5] MCOR out mV, [6..7] speed_sensor_hz (all little-endian).
@@ -324,6 +337,32 @@ class BrakeBridge(Node):
         msg.mcor_output_v = mcor_out_mv / 1000.0
         msg.speed_sensor_hz = float(sensor_hz)
         self.speed_diag_pub.publish(msg)
+
+        self._publish_control_mode(msg.mode_relay)
+
+    # ---------------------------------------------------------------------
+    # STM32 -> PC : mode relay (from 0x123) -> /control_mode
+    # ---------------------------------------------------------------------
+    def _publish_control_mode(self, mode_relay: bool):
+        """Republish the mode relay as an explicit passthrough/system-control mode.
+
+        The relay is the hardware readback of who owns the Curtis throttle and
+        direction lines, so it is the flag to trust; `controller_enabled` is only
+        what was asked for on /speed_enable and can lead the relay while it settles.
+        """
+        mode = ControlMode.MODE_SYSTEM if mode_relay else ControlMode.MODE_PASSTHROUGH
+
+        msg = ControlMode()
+        msg.mode = mode
+        msg.system_control = bool(mode_relay)
+        msg.controller_enabled = self._controller_enabled
+        self.control_mode_pub.publish(msg)
+
+        if mode != self._last_control_mode:
+            self._last_control_mode = mode
+            self.get_logger().info(
+                f'/control_mode -> '
+                f'{"SYSTEM (this board drives the Curtis)" if mode_relay else "PASSTHROUGH (manual pedal wiring)"}')
 
     # ---------------------------------------------------------------------
     # Fail-safe : E-Stop when the heartbeat goes silent for > timeout

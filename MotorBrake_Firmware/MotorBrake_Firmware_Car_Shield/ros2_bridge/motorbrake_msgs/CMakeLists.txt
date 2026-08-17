@@ -12,6 +12,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BrakeStatus.msg"
   "msg/SpeedStatus.msg"
   "msg/SpeedDiagnostics.msg"
+  "msg/ControlMode.msg"
 )
 
 ament_export_dependencies(rosidl_default_runtime)
