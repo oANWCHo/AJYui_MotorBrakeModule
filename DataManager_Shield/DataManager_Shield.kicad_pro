@@ -564,7 +564,7 @@
       "method": 0,
       "sort_order": 0
     },
-    "bom_export_filename": "${PROJECTNAME}.csv",
+    "bom_export_filename": "production\\bom.csv",
     "bom_fmt_presets": [],
     "bom_fmt_settings": {
       "field_delimiter": ",",
@@ -712,7 +712,7 @@
         "uuid": "74a95295-856f-462a-99dc-2eba26429db4"
       }
     ],
-    "used_designators": "#PWR57",
+    "used_designators": "",
     "variants": []
   },
   "sheets": [

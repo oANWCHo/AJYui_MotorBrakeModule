@@ -1682,6 +1682,10 @@
 		(uuid "e2c0c00d-afcd-4a25-91fc-2a7bca61d67d")
 	)
 	(no_connect
+		(at 165.1 118.11)
+		(uuid "f6047272-c81a-49b5-849e-b163318c3e77")
+	)
+	(no_connect
 		(at 123.19 115.57)
 		(uuid "f91d834f-9549-4272-9726-636c76ad5507")
 	)
@@ -2496,17 +2500,6 @@
 		)
 		(uuid "8fd29f7e-39df-46dc-8a34-4b26647e278a")
 	)
-	(hierarchical_label "MCOR_Speed_Control_IN_to_MCU"
-		(shape input)
-		(at 165.1 118.11 0)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify left)
-		)
-		(uuid "aafb1f19-0c41-4ce1-9249-9979b3463f9c")
-	)
 	(hierarchical_label "MCP4725_SDA"
 		(shape bidirectional)
 		(at 166.37 110.49 0)
@@ -2557,10 +2550,10 @@
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
-		(in_bom yes)
+		(in_bom no)
 		(on_board yes)
 		(in_pos_files yes)
-		(dnp no)
+		(dnp yes)
 		(fields_autoplaced yes)
 		(uuid "1197a582-da55-4746-9a2f-edfea7a74fc2")
 		(property "Reference" "J2"
