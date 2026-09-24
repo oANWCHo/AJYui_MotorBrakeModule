@@ -3920,6 +3920,12 @@
 		(uuid "6053a423-80cd-4829-931e-33166526c32d")
 	)
 	(junction
+		(at 154.94 121.92)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "60861f95-7b14-4f35-907e-059c6d2169dd")
+	)
+	(junction
 		(at 196.85 55.88)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -5414,16 +5420,6 @@
 	)
 	(wire
 		(pts
-			(xy 177.8 83.82) (xy 181.61 83.82)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "9d5e5795-ee3c-445b-bbd6-73eda2826d61")
-	)
-	(wire
-		(pts
 			(xy 105.41 38.1) (xy 105.41 44.45)
 		)
 		(stroke
@@ -5931,6 +5927,16 @@
 			(type default)
 		)
 		(uuid "e1f9ccb4-4410-49b2-bb58-9ab9a332cb7e")
+	)
+	(wire
+		(pts
+			(xy 146.05 121.92) (xy 154.94 121.92)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e2eff918-e9ba-4de3-9df7-e359f9b5af93")
 	)
 	(wire
 		(pts
@@ -8463,17 +8469,6 @@
 		)
 		(uuid "2649b655-3138-42eb-bf1b-b9e53ce95388")
 	)
-	(hierarchical_label "WDO"
-		(shape input)
-		(at 177.8 83.82 180)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "3f7f7454-dce0-40ca-9728-dd12b1f6e78b")
-	)
 	(hierarchical_label "ADC1_IN4"
 		(shape input)
 		(at 219.71 73.66 0)
@@ -8495,6 +8490,17 @@
 			(justify right)
 		)
 		(uuid "618a26da-9e4c-463e-b79b-e60098515b60")
+	)
+	(hierarchical_label "WDO"
+		(shape input)
+		(at 181.61 83.82 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "6641de23-7598-4331-838c-19dcb362100e")
 	)
 	(hierarchical_label "ADC_CURRENT"
 		(shape input)
@@ -8561,6 +8567,17 @@
 			(justify right)
 		)
 		(uuid "ab27e510-8056-440d-aed6-a86d531354eb")
+	)
+	(hierarchical_label "EMER"
+		(shape input)
+		(at 146.05 121.92 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "be519c09-c7dd-421b-aa9a-19eee92f4d7c")
 	)
 	(hierarchical_label "ADC1_IN3"
 		(shape input)

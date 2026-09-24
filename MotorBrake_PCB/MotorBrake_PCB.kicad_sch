@@ -784,6 +784,16 @@
 	)
 	(wire
 		(pts
+			(xy 160.02 121.92) (xy 181.61 121.92)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "29819ba0-fe5d-4878-a161-409f2675e836")
+	)
+	(wire
+		(pts
 			(xy 223.52 116.84) (xy 224.79 118.11)
 		)
 		(stroke
@@ -904,6 +914,16 @@
 	)
 	(wire
 		(pts
+			(xy 160.02 140.97) (xy 181.61 140.97)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "93913b95-4a88-4d4d-a556-a539a68a7caf")
+	)
+	(wire
+		(pts
 			(xy 160.02 134.62) (xy 181.61 134.62)
 		)
 		(stroke
@@ -941,16 +961,6 @@
 			(type default)
 		)
 		(uuid "c2baafb4-8c7f-434b-bff4-838fa0968358")
-	)
-	(wire
-		(pts
-			(xy 160.02 121.92) (xy 181.61 121.92)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "d482ac1c-f8c8-462d-9c75-e48ed68787ad")
 	)
 	(wire
 		(pts
@@ -2067,7 +2077,17 @@
 		)
 		(pin "WDO" input
 			(at 160.02 121.92 0)
-			(uuid "55dc1cef-add8-427f-9bdc-6836800337be")
+			(uuid "000de23c-8fa2-402a-9634-b07e130eff69")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+		(pin "EMER" input
+			(at 160.02 140.97 0)
+			(uuid "a5b3c10e-5b34-4528-9665-15dcaada2e82")
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2209,7 +2229,17 @@
 		)
 		(pin "WDO" output
 			(at 181.61 121.92 180)
-			(uuid "307f2d77-0817-447d-86e7-ba1f609ed7c4")
+			(uuid "c19b886b-9530-4fd8-bf85-06ba637d65bf")
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(pin "EMER" output
+			(at 181.61 140.97 180)
+			(uuid "64835435-3dec-414f-be60-e2482be8ec95")
 			(effects
 				(font
 					(size 1.27 1.27)
