@@ -6470,6 +6470,19 @@
 				)
 			)
 		)
+		(property "FT Rotation Offset" "270"
+			(at 0 0 90)
+			(unlocked yes)
+			(layer "F.Fab")
+			(hide yes)
+			(uuid "3f701dc2-f30f-4d41-abe9-4470aaa370cd")
+			(effects
+				(font
+					(size 1 1)
+					(thickness 0.15)
+				)
+			)
+		)
 		(property ki_fp_filters "DIP*W7.62mm*")
 		(path "/9a1cf7e2-0eb1-4184-a354-9850da232cf5/ed8a6a7e-dadd-43fb-bb85-09bc6eba14c2")
 		(sheetname "/ServoBrake/")
